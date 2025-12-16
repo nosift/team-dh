@@ -44,13 +44,6 @@ max_retries = 20
 wait_timeout = 60
 short_wait = 10
 
-# ==================== 代理配置 ====================
-[[proxies]]
-type = "socks5"
-host = "127.0.0.1"
-port = 1080
-username = "proxy_user"
-password = "proxy_password"
 
 # ==================== 文件配置 ====================
 [files]

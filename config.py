@@ -108,43 +108,6 @@ _files = _cfg.get("files", {})
 CSV_FILE = _files.get("csv_file", str(BASE_DIR / "accounts.csv"))
 TEAM_TRACKER_FILE = _files.get("tracker_file", str(BASE_DIR / "team_tracker.json"))
 
-# 代理
-PROXIES = _cfg.get("proxies", [])
-_proxy_index = 0
-
-
-# ==================== 代理辅助函数 ====================
-def get_next_proxy() -> dict:
-    """轮换获取下一个代理"""
-    global _proxy_index
-    if not PROXIES:
-        return None
-    proxy = PROXIES[_proxy_index % len(PROXIES)]
-    _proxy_index += 1
-    return proxy
-
-
-def get_random_proxy() -> dict:
-    """随机获取一个代理"""
-    if not PROXIES:
-        return None
-    return random.choice(PROXIES)
-
-
-def format_proxy_url(proxy: dict) -> str:
-    """格式化代理URL: socks5://user:pass@host:port"""
-    if not proxy:
-        return None
-    p_type = proxy.get("type", "socks5")
-    host = proxy.get("host", "")
-    port = proxy.get("port", "")
-    user = proxy.get("username", "")
-    pwd = proxy.get("password", "")
-    if user and pwd:
-        return f"{p_type}://{user}:{pwd}@{host}:{port}"
-    return f"{p_type}://{host}:{port}"
-
-
 # ==================== 随机姓名列表 ====================
 FIRST_NAMES = [
     "James", "John", "Robert", "Michael", "William", "David", "Richard", "Joseph",
@@ -168,50 +131,7 @@ def get_random_name() -> str:
     return f"{first} {last}"
 
 
-# ==================== 浏览器指纹 ====================
-FINGERPRINTS = [
-    {
-        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "platform": "Win32",
-        "webgl_vendor": "Google Inc. (NVIDIA)",
-        "webgl_renderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 3080 Direct3D11 vs_5_0 ps_5_0)",
-        "language": "en-US",
-        "timezone": "America/New_York",
-        "screen": {"width": 1920, "height": 1080}
-    },
-    {
-        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
-        "platform": "Win32",
-        "webgl_vendor": "Google Inc. (AMD)",
-        "webgl_renderer": "ANGLE (AMD, AMD Radeon RX 6800 XT Direct3D11 vs_5_0 ps_5_0)",
-        "language": "en-US",
-        "timezone": "America/Los_Angeles",
-        "screen": {"width": 2560, "height": 1440}
-    },
-    {
-        "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "platform": "MacIntel",
-        "webgl_vendor": "Google Inc. (Apple)",
-        "webgl_renderer": "ANGLE (Apple, Apple M1 Pro, OpenGL 4.1)",
-        "language": "en-US",
-        "timezone": "America/Chicago",
-        "screen": {"width": 1728, "height": 1117}
-    },
-    {
-        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-        "platform": "Win32",
-        "webgl_vendor": "Google Inc. (Intel)",
-        "webgl_renderer": "ANGLE (Intel, Intel(R) UHD Graphics 630 Direct3D11 vs_5_0 ps_5_0)",
-        "language": "en-GB",
-        "timezone": "Europe/London",
-        "screen": {"width": 1920, "height": 1200}
-    }
-]
 
-
-def get_random_fingerprint() -> dict:
-    """随机获取一个浏览器指纹"""
-    return random.choice(FINGERPRINTS)
 
 
 # ==================== 邮箱辅助函数 ====================
