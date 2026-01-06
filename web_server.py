@@ -264,7 +264,7 @@ def admin_update_code_status(code):
         data = request.get_json()
         status = data.get("status")
 
-        if status not in ["active", "disabled", "expired", "deleted"]:
+        if status not in ["active", "disabled", "expired", "deleted", "used_up"]:
             return jsonify({"success": False, "error": "无效的状态"}), 400
 
         db.update_code_status(code, status)

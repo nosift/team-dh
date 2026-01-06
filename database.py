@@ -166,7 +166,10 @@ class Database:
 
         # 检查使用次数
         if code_info["used_count"] >= code_info["max_uses"]:
-            return False, "兑换码使用次数已达上限"
+            # 自动标记为已用完，便于后台展示
+            if code_info.get("status") == "active":
+                self.update_code_status(code, "used_up")
+            return False, "兑换码已用完"
 
         return True, "有效"
 
@@ -193,6 +196,22 @@ class Database:
             """,
                 (code,),
             )
+
+            # 达到上限后自动标记为已用完（仅影响展示与后续校验）
+            cursor.execute(
+                "SELECT used_count, max_uses, status FROM redemption_codes WHERE code = ?",
+                (code,),
+            )
+            row = cursor.fetchone()
+            if row:
+                used_count = row["used_count"]
+                max_uses = row["max_uses"]
+                status = row["status"]
+                if status == "active" and used_count >= max_uses:
+                    cursor.execute(
+                        "UPDATE redemption_codes SET status = 'used_up' WHERE code = ?",
+                        (code,),
+                    )
 
     def list_codes(
         self,

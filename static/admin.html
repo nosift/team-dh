@@ -605,22 +605,27 @@
                     const statusBadge =
                         code.status === 'active' ? 'success' :
                         code.status === 'expired' ? 'danger' :
+                        code.status === 'used_up' ? 'warning' :
                         code.status === 'deleted' ? 'danger' :
                         'warning';
                     const expires = code.expires_at || '永久有效';
 
                     const toggleBtn = code.status === 'active'
                         ? `<button class="action-btn disable" onclick="updateCodeStatus('${code.code}', 'disabled')">禁用</button>`
-                        : (code.status === 'deleted'
+                        : ((code.status === 'deleted' || code.status === 'used_up')
                             ? ''
                             : `<button class="action-btn enable" onclick="updateCodeStatus('${code.code}', 'active')">启用</button>`);
+
+                    const statusText =
+                        code.status === 'used_up' ? '已用完' :
+                        code.status;
 
                     html += `
                         <tr>
                             <td><code>${code.code}</code></td>
                             <td>${code.team_name}</td>
                             <td>${code.used_count}/${code.max_uses}</td>
-                            <td><span class="badge ${statusBadge}">${code.status}</span></td>
+                            <td><span class="badge ${statusBadge}">${statusText}</span></td>
                             <td>${expires}</td>
                             <td>
                                 ${toggleBtn}
