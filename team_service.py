@@ -175,21 +175,35 @@ def get_team_stats(team: dict) -> dict:
     try:
         response = http_session.get(subs_url, headers=headers, timeout=REQUEST_TIMEOUT)
 
-        if response.status_code == 200:
-            data = response.json()
-            return {
-                "seats_in_use": data.get("seats_in_use", 0),
-                "seats_entitled": data.get("seats_entitled", 0),
-                "pending_invites": data.get("pending_invites", 0),
-                "plan_type": data.get("plan_type", ""),
-            }
-        else:
+        if response.status_code != 200:
             log.warning(f"获取 Team 统计失败: HTTP {response.status_code}")
+            return {}
+
+        data = response.json() or {}
+
+        # 订阅接口的 pending_invites 有时不准确（会返回 0），这里用 invites 列表兜底
+        pending_invites = (
+            data.get("pending_invites")
+            or data.get("pending_invites_count")
+            or data.get("pending_invite_count")
+            or 0
+        )
+        if pending_invites == 0:
+            try:
+                pending_invites = len(get_pending_invites(team))
+            except Exception:
+                pass
+
+        return {
+            "seats_in_use": data.get("seats_in_use", 0),
+            "seats_entitled": data.get("seats_entitled", 0),
+            "pending_invites": pending_invites,
+            "plan_type": data.get("plan_type", ""),
+        }
 
     except Exception as e:
         log.warning(f"获取 Team 统计异常: {e}")
-
-    return {}
+        return {}
 
 
 def get_pending_invites(team: dict) -> list:
