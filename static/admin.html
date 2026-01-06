@@ -260,6 +260,15 @@
             background: #1d1d1f;
         }
 
+        .action-btn.danger {
+            background: #ff3b30;
+            color: white;
+        }
+
+        .action-btn.danger:hover {
+            background: #e0352b;
+        }
+
         code {
             font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
             font-size: 13px;
@@ -300,10 +309,10 @@
 
     <div class="tabs">
         <div class="tab-buttons">
-            <button class="tab-btn active" onclick="switchTab('codes')">兑换码管理</button>
-            <button class="tab-btn" onclick="switchTab('redemptions')">兑换记录</button>
-            <button class="tab-btn" onclick="switchTab('teams')">Team统计</button>
-            <button class="tab-btn" onclick="switchTab('teamManagement')">Team管理</button>
+            <button class="tab-btn active" onclick="switchTab(event, 'codes')">兑换码管理</button>
+            <button class="tab-btn" onclick="switchTab(event, 'redemptions')">兑换记录</button>
+            <button class="tab-btn" onclick="switchTab(event, 'teams')">Team统计</button>
+            <button class="tab-btn" onclick="switchTab(event, 'teamManagement')">Team管理</button>
         </div>
 
         <div class="tab-content">
@@ -319,7 +328,7 @@
                         <option value="disabled">禁用</option>
                         <option value="expired">过期</option>
                     </select>
-                    <button class="refresh-btn" onclick="loadCodes()">刷新</button>
+                    <button class="refresh-btn" onclick="loadCodes({ force: true })">刷新</button>
                 </div>
 
                 <div id="codesTable">
@@ -330,7 +339,7 @@
             <!-- 兑换记录 -->
             <div id="redemptions" class="tab-pane">
                 <div class="filter-bar">
-                    <button class="refresh-btn" onclick="loadRedemptions()">刷新</button>
+                    <button class="refresh-btn" onclick="loadRedemptions({ force: true })">刷新</button>
                 </div>
 
                 <div id="redemptionsTable">
@@ -342,7 +351,7 @@
             <div id="teams" class="tab-pane">
                 <div class="filter-bar">
                     <button class="refresh-btn" onclick="refreshTeamStats()">刷新统计</button>
-                    <button class="refresh-btn" onclick="loadTeamStats()">重新加载</button>
+                    <button class="refresh-btn" onclick="loadTeamStats({ force: true })">重新加载</button>
                 </div>
 
                 <div id="teamsTable">
@@ -354,7 +363,7 @@
             <div id="teamManagement" class="tab-pane">
                 <div class="filter-bar">
                     <button class="refresh-btn" onclick="addTeam()">添加Team</button>
-                    <button class="refresh-btn" onclick="loadTeamList()">刷新</button>
+                    <button class="refresh-btn" onclick="loadTeamList({ force: true })">刷新</button>
                 </div>
 
                 <div id="teamListTable">
@@ -443,12 +452,14 @@
 
     <script>
         // 切换标签页
-        function switchTab(tabName) {
+        function switchTab(evt, tabName) {
             // 更新按钮状态
             document.querySelectorAll('.tab-btn').forEach(btn => {
                 btn.classList.remove('active');
             });
-            event.target.classList.add('active');
+            if (evt && evt.target) {
+                evt.target.classList.add('active');
+            }
 
             // 更新内容显示
             document.querySelectorAll('.tab-pane').forEach(pane => {
@@ -463,138 +474,231 @@
             else if (tabName === 'teamManagement') loadTeamList();
         }
 
-        // 加载统计数据
-        async function loadStats() {
-            try {
-                const response = await fetch('/api/admin/stats');
-                const result = await response.json();
+        // ==================== 简单缓存（减少切换 Tab 时的重复请求卡顿） ====================
+        const CACHE_TTL_MS = {
+            stats: 15000,
+            teams: 15000,
+            codes: 8000,
+            redemptions: 8000
+        };
 
-                if (result.success) {
-                    const stats = result.data.dashboard;
-                    document.getElementById('totalCodes').textContent = stats.total_codes;
-                    document.getElementById('activeCodes').textContent = stats.active_codes;
-                    document.getElementById('totalRedemptions').textContent = stats.total_redemptions;
-                    document.getElementById('successfulRedemptions').textContent = stats.successful_redemptions;
-                    document.getElementById('todayRedemptions').textContent = stats.today_redemptions;
-                }
+        const cacheState = {
+            stats: { ts: 0, data: null, promise: null },
+            teams: { ts: 0, data: null, promise: null },
+            redemptions: { ts: 0, data: null, promise: null },
+            codes: new Map(), // key -> { ts, data, promise }
+        };
+
+        async function fetchJson(url, options) {
+            const response = await fetch(url, options);
+            const result = await response.json();
+            if (!response.ok || !result || result.success === false) {
+                throw new Error((result && (result.error || result.message)) || `请求失败: ${response.status}`);
+            }
+            return result;
+        }
+
+        function isFresh(entry, ttlMs) {
+            return entry && entry.data && (Date.now() - entry.ts) < ttlMs;
+        }
+
+        async function getStats({ force = false } = {}) {
+            const entry = cacheState.stats;
+            if (!force && isFresh(entry, CACHE_TTL_MS.stats)) return entry.data;
+            if (!force && entry.promise) return entry.promise;
+
+            entry.promise = fetchJson('/api/admin/stats').then((result) => {
+                entry.data = result.data;
+                entry.ts = Date.now();
+                return entry.data;
+            }).finally(() => {
+                entry.promise = null;
+            });
+
+            return entry.promise;
+        }
+
+        async function getTeams({ force = false } = {}) {
+            const entry = cacheState.teams;
+            if (!force && isFresh(entry, CACHE_TTL_MS.teams)) return entry.data;
+            if (!force && entry.promise) return entry.promise;
+
+            entry.promise = fetchJson('/api/admin/teams').then((result) => {
+                entry.data = result.data;
+                entry.ts = Date.now();
+                return entry.data;
+            }).finally(() => {
+                entry.promise = null;
+            });
+
+            return entry.promise;
+        }
+
+        async function getCodes({ team = '', status = '', includeDeleted = false, force = false } = {}) {
+            const key = `${team}|${status}|${includeDeleted ? '1' : '0'}`;
+            const entry = cacheState.codes.get(key) || { ts: 0, data: null, promise: null };
+
+            if (!force && isFresh(entry, CACHE_TTL_MS.codes)) return entry.data;
+            if (!force && entry.promise) return entry.promise;
+
+            let url = '/api/admin/codes?';
+            if (team) url += `team=${encodeURIComponent(team)}&`;
+            if (status) url += `status=${encodeURIComponent(status)}&`;
+            if (includeDeleted) url += 'include_deleted=true&';
+
+            entry.promise = fetchJson(url).then((result) => {
+                entry.data = result.data;
+                entry.ts = Date.now();
+                cacheState.codes.set(key, entry);
+                return entry.data;
+            }).finally(() => {
+                entry.promise = null;
+            });
+
+            cacheState.codes.set(key, entry);
+            return entry.promise;
+        }
+
+        async function getRedemptions({ limit = 50, force = false } = {}) {
+            const entry = cacheState.redemptions;
+            if (!force && isFresh(entry, CACHE_TTL_MS.redemptions)) return entry.data;
+            if (!force && entry.promise) return entry.promise;
+
+            entry.promise = fetchJson(`/api/admin/redemptions?limit=${limit}`).then((result) => {
+                entry.data = result.data;
+                entry.ts = Date.now();
+                return entry.data;
+            }).finally(() => {
+                entry.promise = null;
+            });
+
+            return entry.promise;
+        }
+
+        // 加载统计数据
+        async function loadStats(options = {}) {
+            try {
+                const data = await getStats(options);
+                const stats = data.dashboard;
+                document.getElementById('totalCodes').textContent = stats.total_codes;
+                document.getElementById('activeCodes').textContent = stats.active_codes;
+                document.getElementById('totalRedemptions').textContent = stats.total_redemptions;
+                document.getElementById('successfulRedemptions').textContent = stats.successful_redemptions;
+                document.getElementById('todayRedemptions').textContent = stats.today_redemptions;
             } catch (error) {
                 console.error('加载统计失败:', error);
             }
         }
 
         // 加载兑换码列表
-        async function loadCodes() {
+        async function loadCodes(options = {}) {
+            const codesTable = document.getElementById('codesTable');
+            codesTable.innerHTML = '<div class="loading">加载中...</div>';
             const team = document.getElementById('teamFilter').value;
             const status = document.getElementById('statusFilter').value;
 
-            let url = '/api/admin/codes?';
-            if (team) url += `team=${team}&`;
-            if (status) url += `status=${status}`;
-
             try {
-                const response = await fetch(url);
-                const result = await response.json();
+                const codes = await getCodes({ team, status, force: !!options.force });
+                let html = '<table><thead><tr><th>兑换码</th><th>Team</th><th>使用情况</th><th>状态</th><th>过期时间</th><th>操作</th></tr></thead><tbody>';
 
-                if (result.success) {
-                    const codes = result.data;
-                    let html = '<table><thead><tr><th>兑换码</th><th>Team</th><th>使用情况</th><th>状态</th><th>过期时间</th><th>操作</th></tr></thead><tbody>';
+                codes.forEach(code => {
+                    const statusBadge =
+                        code.status === 'active' ? 'success' :
+                        code.status === 'expired' ? 'danger' :
+                        code.status === 'deleted' ? 'danger' :
+                        'warning';
+                    const expires = code.expires_at || '永久有效';
 
-                    codes.forEach(code => {
-                        const statusBadge = code.status === 'active' ? 'success' : code.status === 'expired' ? 'danger' : 'warning';
-                        const expires = code.expires_at || '永久有效';
+                    const toggleBtn = code.status === 'active'
+                        ? `<button class="action-btn disable" onclick="updateCodeStatus('${code.code}', 'disabled')">禁用</button>`
+                        : (code.status === 'deleted'
+                            ? ''
+                            : `<button class="action-btn enable" onclick="updateCodeStatus('${code.code}', 'active')">启用</button>`);
 
-                        html += `
-                            <tr>
-                                <td><code>${code.code}</code></td>
-                                <td>${code.team_name}</td>
-                                <td>${code.used_count}/${code.max_uses}</td>
-                                <td><span class="badge ${statusBadge}">${code.status}</span></td>
-                                <td>${expires}</td>
-                                <td>
-                                    ${code.status === 'active' ?
-                                        `<button class="action-btn disable" onclick="updateCodeStatus('${code.code}', 'disabled')">禁用</button>` :
-                                        `<button class="action-btn enable" onclick="updateCodeStatus('${code.code}', 'active')">启用</button>`
-                                    }
-                                </td>
-                            </tr>
-                        `;
-                    });
+                    html += `
+                        <tr>
+                            <td><code>${code.code}</code></td>
+                            <td>${code.team_name}</td>
+                            <td>${code.used_count}/${code.max_uses}</td>
+                            <td><span class="badge ${statusBadge}">${code.status}</span></td>
+                            <td>${expires}</td>
+                            <td>
+                                ${toggleBtn}
+                                <button class="action-btn danger" onclick="deleteCode('${code.code}')">删除</button>
+                            </td>
+                        </tr>
+                    `;
+                });
 
-                    html += '</tbody></table>';
-                    document.getElementById('codesTable').innerHTML = html;
-                }
+                html += '</tbody></table>';
+                codesTable.innerHTML = html;
             } catch (error) {
                 console.error('加载兑换码失败:', error);
-                document.getElementById('codesTable').innerHTML = '<div class="loading">加载失败</div>';
+                codesTable.innerHTML = '<div class="loading">加载失败</div>';
             }
         }
 
         // 加载兑换记录
-        async function loadRedemptions() {
+        async function loadRedemptions(options = {}) {
+            const redemptionsTable = document.getElementById('redemptionsTable');
+            redemptionsTable.innerHTML = '<div class="loading">加载中...</div>';
             try {
-                const response = await fetch('/api/admin/redemptions?limit=50');
-                const result = await response.json();
+                const redemptions = await getRedemptions({ limit: 50, force: !!options.force });
+                let html = '<table><thead><tr><th>邮箱</th><th>兑换码</th><th>Team</th><th>状态</th><th>兑换时间</th><th>IP地址</th></tr></thead><tbody>';
 
-                if (result.success) {
-                    const redemptions = result.data;
-                    let html = '<table><thead><tr><th>邮箱</th><th>兑换码</th><th>Team</th><th>状态</th><th>兑换时间</th><th>IP地址</th></tr></thead><tbody>';
+                redemptions.forEach(r => {
+                    const statusBadge = r.invite_status === 'success' ? 'success' : r.invite_status === 'failed' ? 'danger' : 'warning';
+                    const time = new Date(r.redeemed_at).toLocaleString();
 
-                    redemptions.forEach(r => {
-                        const statusBadge = r.invite_status === 'success' ? 'success' : r.invite_status === 'failed' ? 'danger' : 'warning';
-                        const time = new Date(r.redeemed_at).toLocaleString();
+                    html += `
+                        <tr>
+                            <td>${r.email}</td>
+                            <td><code>${r.code}</code></td>
+                            <td>${r.team_name}</td>
+                            <td><span class="badge ${statusBadge}">${r.invite_status}</span></td>
+                            <td>${time}</td>
+                            <td>${r.ip_address || '-'}</td>
+                        </tr>
+                    `;
+                });
 
-                        html += `
-                            <tr>
-                                <td>${r.email}</td>
-                                <td><code>${r.code}</code></td>
-                                <td>${r.team_name}</td>
-                                <td><span class="badge ${statusBadge}">${r.invite_status}</span></td>
-                                <td>${time}</td>
-                                <td>${r.ip_address || '-'}</td>
-                            </tr>
-                        `;
-                    });
-
-                    html += '</tbody></table>';
-                    document.getElementById('redemptionsTable').innerHTML = html;
-                }
+                html += '</tbody></table>';
+                redemptionsTable.innerHTML = html;
             } catch (error) {
                 console.error('加载兑换记录失败:', error);
-                document.getElementById('redemptionsTable').innerHTML = '<div class="loading">加载失败</div>';
+                redemptionsTable.innerHTML = '<div class="loading">加载失败</div>';
             }
         }
 
         // 加载Team统计
-        async function loadTeamStats() {
+        async function loadTeamStats(options = {}) {
+            const teamsTable = document.getElementById('teamsTable');
+            teamsTable.innerHTML = '<div class="loading">加载中...</div>';
             try {
-                const response = await fetch('/api/admin/stats');
-                const result = await response.json();
+                const data = await getStats(options);
+                const teams = data.teams;
+                let html = '<table><thead><tr><th>Team</th><th>总席位</th><th>已使用</th><th>待接受</th><th>可用席位</th><th>最后更新</th></tr></thead><tbody>';
 
-                if (result.success) {
-                    const teams = result.data.teams;
-                    let html = '<table><thead><tr><th>Team</th><th>总席位</th><th>已使用</th><th>待接受</th><th>可用席位</th><th>最后更新</th></tr></thead><tbody>';
+                teams.forEach(team => {
+                    const time = new Date(team.last_updated).toLocaleString();
 
-                    teams.forEach(team => {
-                        const time = new Date(team.last_updated).toLocaleString();
+                    html += `
+                        <tr>
+                            <td><strong>${team.team_name}</strong></td>
+                            <td>${team.total_seats}</td>
+                            <td>${team.used_seats}</td>
+                            <td>${team.pending_invites}</td>
+                            <td><strong>${team.available_seats}</strong></td>
+                            <td>${time}</td>
+                        </tr>
+                    `;
+                });
 
-                        html += `
-                            <tr>
-                                <td><strong>${team.team_name}</strong></td>
-                                <td>${team.total_seats}</td>
-                                <td>${team.used_seats}</td>
-                                <td>${team.pending_invites}</td>
-                                <td><strong>${team.available_seats}</strong></td>
-                                <td>${time}</td>
-                            </tr>
-                        `;
-                    });
-
-                    html += '</tbody></table>';
-                    document.getElementById('teamsTable').innerHTML = html;
-                }
+                html += '</tbody></table>';
+                teamsTable.innerHTML = html;
             } catch (error) {
                 console.error('加载Team统计失败:', error);
-                document.getElementById('teamsTable').innerHTML = '<div class="loading">加载失败</div>';
+                teamsTable.innerHTML = '<div class="loading">加载失败</div>';
             }
         }
 
@@ -604,23 +708,14 @@
             teamsTable.innerHTML = '<div class="loading">正在从ChatGPT API刷新统计...</div>';
 
             try {
-                const response = await fetch('/api/admin/teams/refresh-stats', {
-                    method: 'POST'
-                });
-
-                const result = await response.json();
-
-                if (result.success) {
-                    alert(`刷新成功！\n\n${result.message}`);
-                    // 刷新完成后重新加载显示
-                    loadTeamStats();
-                } else {
-                    alert('刷新失败: ' + result.error);
-                    loadTeamStats();
-                }
+                const result = await fetchJson('/api/admin/teams/refresh-stats', { method: 'POST' });
+                cacheState.stats.ts = 0;
+                alert(`刷新成功！\n\n${result.message}`);
+                loadTeamStats({ force: true });
+                loadStats({ force: true });
             } catch (error) {
                 alert('刷新失败: ' + error.message);
-                loadTeamStats();
+                loadTeamStats({ force: true });
             }
         }
 
@@ -631,22 +726,39 @@
             }
 
             try {
-                const response = await fetch(`/api/admin/codes/${code}/status`, {
+                await fetchJson(`/api/admin/codes/${encodeURIComponent(code)}/status`, {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ status })
                 });
 
-                const result = await response.json();
+                cacheState.codes.clear();
+                cacheState.stats.ts = 0;
 
-                if (result.success) {
-                    alert('更新成功');
-                    loadCodes();
-                } else {
-                    alert('更新失败: ' + result.error);
-                }
+                alert('更新成功');
+                loadCodes({ force: true });
+                loadStats({ force: true });
             } catch (error) {
                 alert('更新失败: ' + error.message);
+            }
+        }
+
+        async function deleteCode(code) {
+            if (!confirm(`确定要删除此兑换码吗?\n\n${code}\n\n删除后将无法兑换。`)) {
+                return;
+            }
+
+            try {
+                await fetchJson(`/api/admin/codes/${encodeURIComponent(code)}`, { method: 'DELETE' });
+
+                cacheState.codes.clear();
+                cacheState.stats.ts = 0;
+
+                alert('删除成功');
+                loadCodes({ force: true });
+                loadStats({ force: true });
+            } catch (error) {
+                alert('删除失败: ' + error.message);
             }
         }
 
@@ -657,30 +769,32 @@
             loadCodes();
 
             // 每30秒自动刷新统计
-            setInterval(loadStats, 30000);
+            setTimeout(() => {
+                // 预加载其它Tab，减少首次点击卡顿
+                loadRedemptions();
+                loadTeamStats();
+                loadTeamList();
+            }, 200);
+
+            setInterval(() => loadStats({ force: true }), 30000);
         });
 
         // 加载Team筛选选项
-        async function loadTeamFilterOptions() {
+        async function loadTeamFilterOptions(options = {}) {
             try {
-                const response = await fetch('/api/admin/teams');
-                const result = await response.json();
+                const teamFilter = document.getElementById('teamFilter');
+                const teams = await getTeams(options);
 
-                if (result.success) {
-                    const teamFilter = document.getElementById('teamFilter');
-                    const teams = result.data;
+                // 清空现有选项(除了"所有Team")
+                teamFilter.innerHTML = '<option value="">所有Team</option>';
 
-                    // 清空现有选项(除了"所有Team")
-                    teamFilter.innerHTML = '<option value="">所有Team</option>';
-
-                    // 添加每个Team作为选项
-                    teams.forEach(team => {
-                        const option = document.createElement('option');
-                        option.value = team.name;
-                        option.textContent = team.name;
-                        teamFilter.appendChild(option);
-                    });
-                }
+                // 添加每个Team作为选项
+                teams.forEach(team => {
+                    const option = document.createElement('option');
+                    option.value = team.name;
+                    option.textContent = team.name;
+                    teamFilter.appendChild(option);
+                });
             } catch (error) {
                 console.error('加载Team列表失败:', error);
             }
@@ -691,41 +805,41 @@
         let currentEditingTeamIndex = null;
 
         // 加载 Team 列表
-        async function loadTeamList() {
+        async function loadTeamList(options = {}) {
+            const teamListTable = document.getElementById('teamListTable');
+            teamListTable.innerHTML = '<div class="loading">加载中...</div>';
             try {
-                const response = await fetch('/api/admin/teams');
-                const result = await response.json();
+                const teams = await getTeams(options);
+                let html = '<table><thead><tr><th>Team名称</th><th>邮箱</th><th>Account ID</th><th>Token状态</th><th>操作</th></tr></thead><tbody>';
 
-                if (result.success) {
-                    const teams = result.data;
-                    let html = '<table><thead><tr><th>Team名称</th><th>邮箱</th><th>Account ID</th><th>Token状态</th><th>操作</th></tr></thead><tbody>';
+                teams.forEach(team => {
+                    const tokenBadge = team.has_token ?
+                        '<span class="badge success">已配置</span>' :
+                        '<span class="badge warning">未配置</span>';
 
-                    teams.forEach(team => {
-                        const tokenBadge = team.has_token ?
-                            '<span class="badge success">已配置</span>' :
-                            '<span class="badge warning">未配置</span>';
+                    const accountId = team.account_id || '';
+                    const accountIdDisplay = accountId ? `${accountId.substring(0, 16)}...` : '-';
 
-                        html += `
-                            <tr>
-                                <td><strong>${team.name}</strong></td>
-                                <td>${team.email}</td>
-                                <td><code>${team.account_id.substring(0, 16)}...</code></td>
-                                <td>${tokenBadge}</td>
-                                <td>
-                                    <button class="action-btn enable" onclick="editTeam(${team.index})">编辑</button>
-                                    <button class="action-btn enable" onclick="showGenerateCodesModal(${team.index}, '${team.name}')">生成兑换码</button>
-                                    <button class="action-btn disable" onclick="deleteTeam(${team.index}, '${team.name}')">删除</button>
-                                </td>
-                            </tr>
-                        `;
-                    });
+                    html += `
+                        <tr>
+                            <td><strong>${team.name}</strong></td>
+                            <td>${team.email}</td>
+                            <td><code>${accountIdDisplay}</code></td>
+                            <td>${tokenBadge}</td>
+                            <td>
+                                <button class="action-btn enable" onclick="editTeam(${team.index})">编辑</button>
+                                <button class="action-btn enable" onclick="showGenerateCodesModal(${team.index}, '${team.name}')">生成兑换码</button>
+                                <button class="action-btn disable" onclick="deleteTeam(${team.index}, '${team.name}')">删除</button>
+                            </td>
+                        </tr>
+                    `;
+                });
 
-                    html += '</tbody></table>';
-                    document.getElementById('teamListTable').innerHTML = html;
-                }
+                html += '</tbody></table>';
+                teamListTable.innerHTML = html;
             } catch (error) {
                 console.error('加载Team列表失败:', error);
-                document.getElementById('teamListTable').innerHTML = '<div class="loading">加载失败</div>';
+                teamListTable.innerHTML = '<div class="loading">加载失败</div>';
             }
         }
 
@@ -748,19 +862,20 @@
             document.getElementById('modalTitle').textContent = '编辑Team';
 
             try {
-                const response = await fetch('/api/admin/teams');
-                const result = await response.json();
-
-                if (result.success) {
-                    const team = result.data[index];
-                    document.getElementById('teamName').value = team.name;
-                    document.getElementById('teamEmail').value = team.email;
-                    document.getElementById('teamUserId').value = team.user_id;
-                    document.getElementById('teamAccountId').value = team.account_id;
-                    document.getElementById('teamOrgId').value = team.org_id;
-                    document.getElementById('teamAccessToken').value = ''; // 不显示已有token
-                    document.getElementById('teamModal').style.display = 'flex';
+                const teams = await getTeams();
+                const team = teams.find(t => t.index === index) || teams[index];
+                if (!team) {
+                    alert('Team不存在');
+                    return;
                 }
+
+                document.getElementById('teamName').value = team.name;
+                document.getElementById('teamEmail').value = team.email;
+                document.getElementById('teamUserId').value = team.user_id;
+                document.getElementById('teamAccountId').value = team.account_id;
+                document.getElementById('teamOrgId').value = team.org_id;
+                document.getElementById('teamAccessToken').value = ''; // 不显示已有token
+                document.getElementById('teamModal').style.display = 'flex';
             } catch (error) {
                 alert('加载Team信息失败: ' + error.message);
             }
@@ -814,8 +929,9 @@
                 if (result.success) {
                     alert(result.message);
                     closeTeamModal();
-                    loadTeamList();
-                    loadTeamFilterOptions(); // 刷新Team筛选选项
+                    cacheState.teams.ts = 0;
+                    loadTeamList({ force: true });
+                    loadTeamFilterOptions({ force: true }); // 刷新Team筛选选项
                 } else {
                     alert('保存失败: ' + result.error);
                 }
@@ -839,8 +955,9 @@
 
                 if (result.success) {
                     alert(result.message);
-                    loadTeamList();
-                    loadTeamFilterOptions(); // 刷新Team筛选选项
+                    cacheState.teams.ts = 0;
+                    loadTeamList({ force: true });
+                    loadTeamFilterOptions({ force: true }); // 刷新Team筛选选项
                 } else {
                     alert('删除失败: ' + result.error);
                 }
@@ -859,7 +976,7 @@
         function showGenerateCodesModal(index, teamName) {
             currentEditingTeamIndex = index;
             document.getElementById('genTeamName').value = teamName;
-            document.getElementById('genCount').value = 10;
+            document.getElementById('genCount').value = 4;
             document.getElementById('genMaxUses').value = 1;
             document.getElementById('genExpiresDays').value = '';
             document.getElementById('generateCodesModal').style.display = 'flex';
@@ -872,8 +989,8 @@
             const expiresDaysInput = document.getElementById('genExpiresDays').value;
             const expiresDays = expiresDaysInput ? parseInt(expiresDaysInput) : null;
 
-            if (!count || count < 1 || count > 100) {
-                alert('生成数量必须在 1-100 之间');
+            if (!count || count < 1 || count > 1000) {
+                alert('生成数量必须在 1-1000 之间');
                 return;
             }
 
@@ -910,7 +1027,10 @@
 
                     alert(`成功生成 ${codes.length} 个兑换码！\n\n兑换码已复制到剪贴板。\n\n${codesText}`);
                     closeGenerateCodesModal();
-                    loadCodes(); // 刷新兑换码列表
+                    cacheState.codes.clear();
+                    cacheState.stats.ts = 0;
+                    loadCodes({ force: true }); // 刷新兑换码列表
+                    loadStats({ force: true });
                 } else {
                     alert('生成失败: ' + result.error);
                 }

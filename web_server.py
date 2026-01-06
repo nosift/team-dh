@@ -49,7 +49,7 @@ def index():
 def redeem():
     """兑换接口"""
     try:
-        data = request.get_json()
+        data = request.get_json() or {}
 
         if not data:
             return jsonify({"success": False, "error": "无效的请求数据"}), 400
@@ -209,7 +209,8 @@ def admin_list_codes():
         team_name = request.args.get("team")
         status = request.args.get("status")
 
-        codes = db.list_codes(team_name=team_name, status=status)
+        include_deleted = request.args.get("include_deleted", "false").lower() in {"1", "true", "yes", "y", "on"}
+        codes = db.list_codes(team_name=team_name, status=status, include_deleted=include_deleted)
 
         return jsonify({
             "success": True,
@@ -247,7 +248,7 @@ def admin_update_code_status(code):
         data = request.get_json()
         status = data.get("status")
 
-        if status not in ["active", "disabled", "expired"]:
+        if status not in ["active", "disabled", "expired", "deleted"]:
             return jsonify({"success": False, "error": "无效的状态"}), 400
 
         db.update_code_status(code, status)
@@ -255,6 +256,22 @@ def admin_update_code_status(code):
         return jsonify({"success": True, "message": f"兑换码状态已更新为 {status}"})
     except Exception as e:
         log.error(f"更新兑换码状态失败: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/admin/codes/<code>", methods=["DELETE"])
+@require_admin
+def admin_delete_code(code):
+    """删除兑换码（默认软删除）"""
+    try:
+        hard = request.args.get("hard", "false").lower() in {"1", "true", "yes", "y", "on"}
+        ok = db.delete_code(code, hard=hard)
+        if not ok:
+            return jsonify({"success": False, "error": "兑换码不存在"}), 404
+
+        return jsonify({"success": True, "message": "删除成功" if not hard else "删除成功(含记录)"})
+    except Exception as e:
+        log.error(f"删除兑换码失败: {e}")
         return jsonify({"success": False, "error": str(e)}), 500
 
 
@@ -360,7 +377,7 @@ def admin_generate_codes_for_team(index):
         from code_generator import CodeGenerator
 
         data = request.get_json()
-        count = int(data.get("count", 1))
+        count = int(data.get("count", 4))
         max_uses = int(data.get("max_uses", 1))
         expires_days = data.get("expires_days")  # None 表示永久有效
 
@@ -413,11 +430,7 @@ def admin_refresh_team_stats():
             team_name = team_info["name"]
 
             # 获取对应的team配置
-            team_config = None
-            for team in config.TEAMS:
-                if team.get("name") == team_name:
-                    team_config = team
-                    break
+            team_config = config.resolve_team(team_name)
 
             if not team_config:
                 continue

@@ -136,7 +136,8 @@ def get_verification_code(email: str, max_retries: int = None, interval: int = N
                     if match:
                         code = match.group(1)
                         if progress_shown:
-                        log.progress_clear()
+                            log.progress_clear()
+                            progress_shown = False
                         log.success(f"验证码获取成功: {code}")
                         return code, None, email_time_str
 
@@ -145,7 +146,8 @@ def get_verification_code(email: str, max_retries: int = None, interval: int = N
                     if match:
                         code = match.group(1)
                         if progress_shown:
-                        log.progress_clear()
+                            log.progress_clear()
+                            progress_shown = False
                         log.success(f"验证码获取成功: {code}")
                         return code, None, email_time_str
 
@@ -154,7 +156,8 @@ def get_verification_code(email: str, max_retries: int = None, interval: int = N
                     if match:
                         code = match.group(1)
                         if progress_shown:
-                        log.progress_clear()
+                            log.progress_clear()
+                            progress_shown = False
                         log.success(f"验证码获取成功: {code}")
                         return code, None, email_time_str
 

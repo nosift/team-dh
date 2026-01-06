@@ -195,7 +195,10 @@ class Database:
             )
 
     def list_codes(
-        self, team_name: Optional[str] = None, status: Optional[str] = None
+        self,
+        team_name: Optional[str] = None,
+        status: Optional[str] = None,
+        include_deleted: bool = False,
     ) -> List[Dict[str, Any]]:
         """列出兑换码"""
         with self.get_connection() as conn:
@@ -211,11 +214,38 @@ class Database:
             if status:
                 query += " AND status = ?"
                 params.append(status)
+            elif not include_deleted:
+                query += " AND status != 'deleted'"
 
             query += " ORDER BY created_at DESC"
 
             cursor.execute(query, params)
             return [dict(row) for row in cursor.fetchall()]
+
+    def delete_code(self, code: str, hard: bool = False) -> bool:
+        """
+        删除兑换码。
+
+        - hard=False: 软删除（将 status 标记为 deleted）
+        - hard=True: 物理删除（同时删除关联兑换记录）
+        """
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+
+            cursor.execute("SELECT id FROM redemption_codes WHERE code = ?", (code,))
+            row = cursor.fetchone()
+            if not row:
+                return False
+
+            code_id = row["id"] if isinstance(row, sqlite3.Row) else row[0]
+
+            if hard:
+                cursor.execute("DELETE FROM redemptions WHERE code_id = ?", (code_id,))
+                cursor.execute("DELETE FROM redemption_codes WHERE id = ?", (code_id,))
+            else:
+                cursor.execute("UPDATE redemption_codes SET status = 'deleted' WHERE id = ?", (code_id,))
+
+            return True
 
     # ==================== 兑换记录管理 ====================
 

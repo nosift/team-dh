@@ -174,11 +174,7 @@ class RedemptionService:
         """检查Team是否有可用席位"""
         try:
             # 从config获取team配置
-            team_config = None
-            for team in config.TEAMS:
-                if team["name"] == team_name:
-                    team_config = team
-                    break
+            team_config = config.resolve_team(team_name)
 
             if not team_config:
                 return {"available": False, "message": f"Team {team_name} 不存在"}
@@ -216,11 +212,7 @@ class RedemptionService:
         """邀请用户到Team"""
         try:
             # 获取team配置
-            team_config = None
-            for team in config.TEAMS:
-                if team["name"] == team_name:
-                    team_config = team
-                    break
+            team_config = config.resolve_team(team_name)
 
             if not team_config:
                 return {"success": False, "error": f"Team {team_name} 配置不存在"}
@@ -245,11 +237,7 @@ class RedemptionService:
         """更新Team统计信息到数据库"""
         try:
             # 获取team配置
-            team_config = None
-            for team in config.TEAMS:
-                if team["name"] == team_name:
-                    team_config = team
-                    break
+            team_config = config.resolve_team(team_name)
 
             if not team_config:
                 return

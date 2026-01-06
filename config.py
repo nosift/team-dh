@@ -303,6 +303,39 @@ def get_team_by_org(org_id: str) -> dict:
     return next((t for t in TEAMS if t.get("account", {}).get("organizationId") == org_id), {})
 
 
+def resolve_team(team_name: str) -> dict:
+    """
+    根据 team_name 查找 Team 配置。
+
+    - 优先精确匹配 TEAMS[i]["name"]
+    - 其次忽略大小写/首尾空格匹配
+    - 最后支持 "Team1"/"team 1" 这类按序号映射到 TEAMS[0]
+    """
+    if not team_name:
+        return {}
+
+    normalized = str(team_name).strip()
+    if not normalized:
+        return {}
+
+    exact = next((t for t in TEAMS if (t.get("name") or "") == normalized), None)
+    if exact:
+        return exact
+
+    lowered = normalized.casefold()
+    relaxed = next((t for t in TEAMS if (t.get("name") or "").strip().casefold() == lowered), None)
+    if relaxed:
+        return relaxed
+
+    m = re.match(r"^team\s*(\d+)$", normalized, flags=re.IGNORECASE)
+    if m:
+        idx = int(m.group(1)) - 1
+        if 0 <= idx < len(TEAMS):
+            return TEAMS[idx]
+
+    return {}
+
+
 def reload_teams():
     """重新加载 team.json 和 team_names 配置"""
     global TEAMS, _raw_teams, _cfg
