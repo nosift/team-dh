@@ -36,7 +36,9 @@ jobs:
         password: ${{ secrets.GITHUB_TOKEN }}
 
     - name: Log in to Docker Hub
-      if: github.event_name != 'pull_request' && secrets.DOCKER_USERNAME && secrets.DOCKER_PASSWORD
+      id: dockerhub_login
+      if: github.event_name != 'pull_request'
+      continue-on-error: true
       uses: docker/login-action@v3
       with:
         registry: ${{ env.DOCKERHUB_REGISTRY }}
@@ -67,7 +69,7 @@ jobs:
         cache-to: type=gha,mode=max
 
     - name: Extract metadata (Docker Hub)
-      if: github.event_name != 'pull_request' && secrets.DOCKER_USERNAME && secrets.DOCKER_PASSWORD
+      if: github.event_name != 'pull_request' && steps.dockerhub_login.outcome == 'success'
       id: meta_dockerhub
       uses: docker/metadata-action@v5
       with:
@@ -79,7 +81,7 @@ jobs:
           type=raw,value=latest,enable={{is_default_branch}}
 
     - name: Build and push Docker image (Docker Hub)
-      if: github.event_name != 'pull_request' && secrets.DOCKER_USERNAME && secrets.DOCKER_PASSWORD
+      if: github.event_name != 'pull_request' && steps.dockerhub_login.outcome == 'success'
       uses: docker/build-push-action@v5
       with:
         context: .
@@ -91,7 +93,7 @@ jobs:
         cache-to: type=gha,mode=max
 
     - name: Update Docker Hub description
-      if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && secrets.DOCKER_USERNAME && secrets.DOCKER_PASSWORD
+      if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && steps.dockerhub_login.outcome == 'success'
       uses: peter-evans/dockerhub-description@v3
       with:
         username: ${{ secrets.DOCKER_USERNAME }}
