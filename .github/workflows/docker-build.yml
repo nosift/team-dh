@@ -11,7 +11,7 @@ env:
   DOCKERHUB_REGISTRY: docker.io
   DOCKERHUB_IMAGE_NAME: nosift/chatgpt-team-redemption
   GHCR_REGISTRY: ghcr.io
-  GHCR_IMAGE_NAME: ${{ github.repository_owner }}/chatgpt-team-redemption
+  GHCR_IMAGE_NAME: nosift/chatgpt-team-redemption
 
 jobs:
   build:
