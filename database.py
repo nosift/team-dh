@@ -641,6 +641,14 @@ class Database:
             )
             active_codes = cursor.fetchone()["count"]
 
+            # 兑换码状态细分
+            cursor.execute("SELECT COUNT(*) as count FROM redemption_codes WHERE status = 'used_up'")
+            used_up_codes = cursor.fetchone()["count"]
+            cursor.execute("SELECT COUNT(*) as count FROM redemption_codes WHERE status = 'disabled'")
+            disabled_codes = cursor.fetchone()["count"]
+            cursor.execute("SELECT COUNT(*) as count FROM redemption_codes WHERE status = 'expired'")
+            expired_codes = cursor.fetchone()["count"]
+
             # 总兑换次数
             cursor.execute("SELECT COUNT(*) as count FROM redemptions")
             total_redemptions = cursor.fetchone()["count"]
@@ -661,18 +669,41 @@ class Database:
             cursor.execute(
                 """
                 SELECT COUNT(*) as count FROM redemptions
-                WHERE DATE(redeemed_at) = DATE('now')
+                WHERE DATE(redeemed_at, 'localtime') = DATE('now', 'localtime')
             """
             )
             today_redemptions = cursor.fetchone()["count"]
 
+            cursor.execute(
+                """
+                SELECT COUNT(*) as count FROM redemptions
+                WHERE invite_status = 'success'
+                  AND DATE(redeemed_at, 'localtime') = DATE('now', 'localtime')
+            """
+            )
+            today_successful_redemptions = cursor.fetchone()["count"]
+
+            cursor.execute(
+                """
+                SELECT COUNT(*) as count FROM redemptions
+                WHERE invite_status = 'failed'
+                  AND DATE(redeemed_at, 'localtime') = DATE('now', 'localtime')
+            """
+            )
+            today_failed_redemptions = cursor.fetchone()["count"]
+
             return {
                 "total_codes": total_codes,
                 "active_codes": active_codes,
+                "used_up_codes": used_up_codes,
+                "disabled_codes": disabled_codes,
+                "expired_codes": expired_codes,
                 "total_redemptions": total_redemptions,
                 "successful_redemptions": successful_redemptions,
                 "failed_redemptions": failed_redemptions,
                 "today_redemptions": today_redemptions,
+                "today_successful_redemptions": today_successful_redemptions,
+                "today_failed_redemptions": today_failed_redemptions,
             }
 
 

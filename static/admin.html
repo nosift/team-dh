@@ -82,6 +82,13 @@
             letter-spacing: -1px;
         }
 
+        .stat-card .subtext {
+            margin-top: 8px;
+            color: #86868b;
+            font-size: 13px;
+            line-height: 1.4;
+        }
+
         .tabs {
             background: #ffffff;
             border-radius: 16px;
@@ -303,12 +310,18 @@
         }
 
         .team-cell {
-            max-width: 180px;
+            max-width: min(320px, 35vw);
             display: inline-block;
             overflow: hidden;
             text-overflow: ellipsis;
             white-space: nowrap;
             vertical-align: bottom;
+        }
+
+        .filter-label {
+            font-size: 13px;
+            color: #86868b;
+            margin-right: -6px;
         }
 
         .ui-toast {
@@ -390,28 +403,29 @@
 
     <div class="stats-grid" id="statsGrid">
         <div class="stat-card">
-            <h3>总兑换码数</h3>
+            <h3>兑换码总数</h3>
             <div class="number" id="totalCodes">-</div>
+            <div class="subtext" id="codesBreakdown">-</div>
         </div>
         <div class="stat-card">
-            <h3>激活的兑换码</h3>
+            <h3>可用兑换码</h3>
             <div class="number" id="activeCodes">-</div>
+            <div class="subtext" id="activeCodesHint">状态=active</div>
         </div>
         <div class="stat-card">
-            <h3>总兑换次数</h3>
+            <h3>兑换请求</h3>
             <div class="number" id="totalRedemptions">-</div>
+            <div class="subtext" id="redemptionsBreakdown">-</div>
         </div>
         <div class="stat-card">
-            <h3>成功兑换次数</h3>
-            <div class="number" id="successfulRedemptions">-</div>
+            <h3>成功率</h3>
+            <div class="number" id="successRate">-</div>
+            <div class="subtext" id="successRateHint">-</div>
         </div>
         <div class="stat-card">
-            <h3>失败兑换次数</h3>
-            <div class="number" id="failedRedemptions">-</div>
-        </div>
-        <div class="stat-card">
-            <h3>今日兑换次数</h3>
-            <div class="number" id="todayRedemptions">-</div>
+            <h3>今日成功</h3>
+            <div class="number" id="todaySuccess">-</div>
+            <div class="subtext" id="todayBreakdown">-</div>
         </div>
     </div>
 
@@ -428,9 +442,11 @@
             <div id="codes" class="tab-pane active">
                 <div class="filter-bar">
                     <div class="filter-left">
+                        <span class="filter-label">Team</span>
                         <select id="teamFilter" onchange="loadCodes()">
                             <option value="">所有Team</option>
                         </select>
+                        <span class="filter-label">状态</span>
                         <select id="statusFilter" onchange="loadCodes()">
                             <option value="">所有状态</option>
                             <option value="active">激活</option>
@@ -503,7 +519,7 @@
 
             <div style="margin-bottom: 16px;">
                 <label style="display: block; margin-bottom: 8px; color: #1d1d1f; font-weight: 500;">Team 名称</label>
-                <input type="text" id="teamName" placeholder="用于后台显示（建议简短，如: team-1）" style="width: 100%; padding: 12px; border: 1px solid #d2d2d7; border-radius: 10px; font-size: 14px;">
+                <input type="text" id="teamName" placeholder="例如：yulisutari（建议英文/数字/短横线，且唯一）" style="width: 100%; padding: 12px; border: 1px solid #d2d2d7; border-radius: 10px; font-size: 14px;">
             </div>
 
             <div style="margin-bottom: 16px;">
@@ -873,9 +889,27 @@
                 document.getElementById('totalCodes').textContent = stats.total_codes;
                 document.getElementById('activeCodes').textContent = stats.active_codes;
                 document.getElementById('totalRedemptions').textContent = stats.total_redemptions;
-                document.getElementById('successfulRedemptions').textContent = stats.successful_redemptions;
-                document.getElementById('failedRedemptions').textContent = stats.failed_redemptions ?? 0;
-                document.getElementById('todayRedemptions').textContent = stats.today_redemptions;
+
+                const successful = Number(stats.successful_redemptions ?? 0);
+                const failed = Number(stats.failed_redemptions ?? 0);
+                const total = Number(stats.total_redemptions ?? 0);
+
+                const rate = total > 0 ? ((successful / total) * 100) : null;
+                document.getElementById('successRate').textContent = rate === null ? '-' : `${rate.toFixed(1)}%`;
+                document.getElementById('successRateHint').textContent = total > 0 ? `${successful}/${total}` : '-';
+
+                const usedUp = Number(stats.used_up_codes ?? 0);
+                const disabled = Number(stats.disabled_codes ?? 0);
+                const expired = Number(stats.expired_codes ?? 0);
+                document.getElementById('codesBreakdown').textContent = `已用完 ${usedUp} · 禁用 ${disabled} · 过期 ${expired}`;
+
+                document.getElementById('redemptionsBreakdown').textContent = `成功 ${successful} · 失败 ${failed}`;
+
+                const todaySuccess = Number(stats.today_successful_redemptions ?? 0);
+                const todayFailed = Number(stats.today_failed_redemptions ?? 0);
+                const todayTotal = Number(stats.today_redemptions ?? 0);
+                document.getElementById('todaySuccess').textContent = todaySuccess;
+                document.getElementById('todayBreakdown').textContent = `失败 ${todayFailed} · 总计 ${todayTotal}`;
             } catch (error) {
                 console.error('加载统计失败:', error);
             }
@@ -899,29 +933,32 @@
                         code.status === 'used_up' ? 'warning' :
                         code.status === 'deleted' ? 'danger' :
                         'warning';
-                    const expires = code.expires_at || '永久有效';
+                    const expires = escapeHtml(code.expires_at || '永久有效');
                     const teamName = code.team_display_name || code.team_name || code.team_key || '-';
+                    const safeTeamName = escapeHtml(teamName);
+                    const safeCode = escapeHtml(code.code);
+                    const codeJson = JSON.stringify(code.code);
 
                     const toggleBtn = code.status === 'active'
-                        ? `<button class="action-btn disable" onclick="updateCodeStatus('${code.code}', 'disabled')">禁用</button>`
+                        ? `<button class="action-btn disable" onclick="updateCodeStatus(${codeJson}, 'disabled')">禁用</button>`
                         : ((code.status === 'deleted' || code.status === 'used_up')
                             ? ''
-                            : `<button class="action-btn enable" onclick="updateCodeStatus('${code.code}', 'active')">启用</button>`);
+                            : `<button class="action-btn enable" onclick="updateCodeStatus(${codeJson}, 'active')">启用</button>`);
 
                     const statusText =
                         code.status === 'used_up' ? '已用完' :
-                        code.status;
+                        escapeHtml(code.status);
 
                     html += `
                         <tr>
-                            <td><code class="copyable" data-copy="${code.code}" title="点击复制">${code.code}</code></td>
-                            <td><span class="team-cell" title="${teamName}">${teamName}</span></td>
+                            <td><code class="copyable" data-copy="${safeCode}" title="点击复制">${safeCode}</code></td>
+                            <td><span class="team-cell" title="${safeTeamName}">${safeTeamName}</span></td>
                             <td>${code.used_count}/${code.max_uses}</td>
                             <td><span class="badge ${statusBadge}">${statusText}</span></td>
                             <td>${expires}</td>
                             <td>
                                 ${toggleBtn}
-                                <button class="action-btn danger" onclick="deleteCode('${code.code}')">删除</button>
+                                <button class="action-btn danger" onclick="deleteCode(${codeJson})">删除</button>
                             </td>
                         </tr>
                     `;
@@ -947,15 +984,19 @@
                     const statusBadge = r.invite_status === 'success' ? 'success' : r.invite_status === 'failed' ? 'danger' : 'warning';
                     const time = new Date(r.redeemed_at).toLocaleString();
                     const teamName = r.team_display_name || r.team_name || r.team_key || '-';
+                    const safeTeamName = escapeHtml(teamName);
+                    const safeEmail = escapeHtml(r.email);
+                    const safeCode = escapeHtml(r.code);
+                    const safeIp = escapeHtml(r.ip_address || '-');
 
                     html += `
                         <tr>
-                            <td>${r.email}</td>
-                            <td><code class="copyable" data-copy="${r.code}" title="点击复制">${r.code}</code></td>
-                            <td><span class="team-cell" title="${teamName}">${teamName}</span></td>
+                            <td>${safeEmail}</td>
+                            <td><code class="copyable" data-copy="${safeCode}" title="点击复制">${safeCode}</code></td>
+                            <td><span class="team-cell" title="${safeTeamName}">${safeTeamName}</span></td>
                             <td><span class="badge ${statusBadge}">${r.invite_status}</span></td>
                             <td>${time}</td>
-                            <td>${r.ip_address || '-'}</td>
+                            <td>${safeIp}</td>
                             <td><button class="action-btn danger" onclick="deleteRedemption(${r.id})">删除</button></td>
                         </tr>
                     `;
@@ -981,10 +1022,11 @@
                 teams.forEach(team => {
                     const time = new Date(team.last_updated).toLocaleString();
                     const teamName = team.team_display_name || team.team_name || team.team_key || '-';
+                    const safeTeamName = escapeHtml(teamName);
 
                     html += `
                         <tr>
-                            <td><strong><span class="team-cell" title="${teamName}">${teamName}</span></strong></td>
+                            <td><strong><span class="team-cell" title="${safeTeamName}">${safeTeamName}</span></strong></td>
                             <td>${team.total_seats}</td>
                             <td>${team.used_seats}</td>
                             <td>${team.pending_invites}</td>
@@ -1190,17 +1232,20 @@
 
                     const accountId = team.account_id || '';
                     const accountIdDisplay = accountId ? `${accountId.substring(0, 16)}...` : '-';
+                    const safeName = escapeHtml(team.name);
+                    const safeEmail = escapeHtml(team.email);
+                    const teamNameJson = JSON.stringify(team.name);
 
                     html += `
                         <tr>
-                            <td><strong>${team.name}</strong></td>
-                            <td>${team.email}</td>
+                            <td><strong><span class="team-cell" title="${safeName}">${safeName}</span></strong></td>
+                            <td>${safeEmail}</td>
                             <td><code>${accountIdDisplay}</code></td>
                             <td>${tokenBadge}</td>
                             <td>
                                 <button class="action-btn enable" onclick="editTeam(${team.index})">编辑</button>
-                                <button class="action-btn enable" onclick="showGenerateCodesModal(${team.index}, '${team.name}')">生成兑换码</button>
-                                <button class="action-btn disable" onclick="deleteTeam(${team.index}, '${team.name}')">删除</button>
+                                <button class="action-btn enable" onclick="showGenerateCodesModal(${team.index}, ${teamNameJson})">生成兑换码</button>
+                                <button class="action-btn disable" onclick="deleteTeam(${team.index}, ${teamNameJson})">删除</button>
                             </td>
                         </tr>
                     `;
