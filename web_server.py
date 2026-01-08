@@ -436,6 +436,20 @@ def admin_list_redemptions():
         return jsonify({"success": False, "error": str(e)}), 500
 
 
+@app.route("/api/admin/redemptions/<int:redemption_id>", methods=["DELETE"])
+@require_admin
+def admin_delete_redemption(redemption_id: int):
+    """删除单条兑换记录"""
+    try:
+        ok = db.delete_redemption(redemption_id)
+        if not ok:
+            return jsonify({"success": False, "error": "兑换记录不存在"}), 404
+        return jsonify({"success": True, "message": "删除成功"})
+    except Exception as e:
+        log.error(f"删除兑换记录失败: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
 @app.route("/api/admin/codes/<code>/status", methods=["PUT"])
 @require_admin
 def admin_update_code_status(code):

@@ -188,6 +188,23 @@
             display: flex;
             gap: 12px;
             margin-bottom: 20px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .filter-left {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .filter-right {
+            margin-left: auto;
+            display: flex;
+            gap: 12px;
+            align-items: center;
+            flex-wrap: wrap;
         }
 
         .filter-bar select {
@@ -213,7 +230,6 @@
             border: none;
             border-radius: 10px;
             cursor: pointer;
-            margin-left: auto;
             font-size: 14px;
             font-weight: 500;
             transition: all 0.2s ease;
@@ -276,6 +292,15 @@
             padding: 3px 6px;
             border-radius: 4px;
         }
+
+        .team-cell {
+            max-width: 180px;
+            display: inline-block;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            vertical-align: bottom;
+        }
     </style>
 </head>
 <body>
@@ -302,6 +327,10 @@
             <div class="number" id="successfulRedemptions">-</div>
         </div>
         <div class="stat-card">
+            <h3>失败兑换次数</h3>
+            <div class="number" id="failedRedemptions">-</div>
+        </div>
+        <div class="stat-card">
             <h3>今日兑换次数</h3>
             <div class="number" id="todayRedemptions">-</div>
         </div>
@@ -319,17 +348,21 @@
             <!-- 兑换码管理 -->
             <div id="codes" class="tab-pane active">
                 <div class="filter-bar">
-                    <select id="teamFilter" onchange="loadCodes()">
-                        <option value="">所有Team</option>
-                    </select>
-                    <select id="statusFilter" onchange="loadCodes()">
-                        <option value="">所有状态</option>
-                        <option value="active">激活</option>
-                        <option value="disabled">禁用</option>
-                        <option value="expired">过期</option>
-                    </select>
-                    <button class="refresh-btn" onclick="loadCodes({ force: true })">刷新</button>
-                    <button class="action-btn danger" onclick="bulkDeleteCodes()">全部删除</button>
+                    <div class="filter-left">
+                        <select id="teamFilter" onchange="loadCodes()">
+                            <option value="">所有Team</option>
+                        </select>
+                        <select id="statusFilter" onchange="loadCodes()">
+                            <option value="">所有状态</option>
+                            <option value="active">激活</option>
+                            <option value="disabled">禁用</option>
+                            <option value="expired">过期</option>
+                        </select>
+                    </div>
+                    <div class="filter-right">
+                        <button class="refresh-btn" onclick="loadCodes({ force: true })">刷新</button>
+                        <button class="action-btn danger" onclick="bulkDeleteCodes()">全部删除</button>
+                    </div>
                 </div>
 
                 <div id="codesTable">
@@ -340,8 +373,11 @@
             <!-- 兑换记录 -->
             <div id="redemptions" class="tab-pane">
                 <div class="filter-bar">
-                    <button class="refresh-btn" onclick="loadRedemptions({ force: true })">刷新</button>
-                    <button class="action-btn danger" onclick="bulkDeleteRedemptions()">全部删除</button>
+                    <div class="filter-left"></div>
+                    <div class="filter-right">
+                        <button class="refresh-btn" onclick="loadRedemptions({ force: true })">刷新</button>
+                        <button class="action-btn danger" onclick="bulkDeleteRedemptions()">全部删除</button>
+                    </div>
                 </div>
 
                 <div id="redemptionsTable">
@@ -352,8 +388,11 @@
             <!-- Team统计 -->
             <div id="teams" class="tab-pane">
                 <div class="filter-bar">
-                    <button class="refresh-btn" onclick="refreshTeamStats()">刷新统计</button>
-                    <button class="refresh-btn" onclick="loadTeamStats({ force: true })">重新加载</button>
+                    <div class="filter-left"></div>
+                    <div class="filter-right">
+                        <button class="refresh-btn" onclick="refreshTeamStats()">刷新统计</button>
+                        <button class="refresh-btn" onclick="loadTeamStats({ force: true })">重新加载</button>
+                    </div>
                 </div>
 
                 <div id="teamsTable">
@@ -364,8 +403,11 @@
             <!-- Team管理 -->
             <div id="teamManagement" class="tab-pane">
                 <div class="filter-bar">
-                    <button class="refresh-btn" onclick="addTeam()">添加Team</button>
-                    <button class="refresh-btn" onclick="loadTeamList({ force: true })">刷新</button>
+                    <div class="filter-left"></div>
+                    <div class="filter-right">
+                        <button class="refresh-btn" onclick="addTeam()">添加Team</button>
+                        <button class="refresh-btn" onclick="loadTeamList({ force: true })">刷新</button>
+                    </div>
                 </div>
 
                 <div id="teamListTable">
@@ -590,6 +632,7 @@
                 document.getElementById('activeCodes').textContent = stats.active_codes;
                 document.getElementById('totalRedemptions').textContent = stats.total_redemptions;
                 document.getElementById('successfulRedemptions').textContent = stats.successful_redemptions;
+                document.getElementById('failedRedemptions').textContent = stats.failed_redemptions ?? 0;
                 document.getElementById('todayRedemptions').textContent = stats.today_redemptions;
             } catch (error) {
                 console.error('加载统计失败:', error);
@@ -630,7 +673,7 @@
                     html += `
                         <tr>
                             <td><code>${code.code}</code></td>
-                            <td>${teamName}</td>
+                            <td><span class="team-cell" title="${teamName}">${teamName}</span></td>
                             <td>${code.used_count}/${code.max_uses}</td>
                             <td><span class="badge ${statusBadge}">${statusText}</span></td>
                             <td>${expires}</td>
@@ -656,7 +699,7 @@
             redemptionsTable.innerHTML = '<div class="loading">加载中...</div>';
             try {
                 const redemptions = await getRedemptions({ limit: 50, force: !!options.force });
-                let html = '<table><thead><tr><th>邮箱</th><th>兑换码</th><th>Team</th><th>状态</th><th>兑换时间</th><th>IP地址</th></tr></thead><tbody>';
+                let html = '<table><thead><tr><th>邮箱</th><th>兑换码</th><th>Team</th><th>状态</th><th>兑换时间</th><th>IP地址</th><th>操作</th></tr></thead><tbody>';
 
                 redemptions.forEach(r => {
                     const statusBadge = r.invite_status === 'success' ? 'success' : r.invite_status === 'failed' ? 'danger' : 'warning';
@@ -667,10 +710,11 @@
                         <tr>
                             <td>${r.email}</td>
                             <td><code>${r.code}</code></td>
-                            <td>${teamName}</td>
+                            <td><span class="team-cell" title="${teamName}">${teamName}</span></td>
                             <td><span class="badge ${statusBadge}">${r.invite_status}</span></td>
                             <td>${time}</td>
                             <td>${r.ip_address || '-'}</td>
+                            <td><button class="action-btn danger" onclick="deleteRedemption(${r.id})">删除</button></td>
                         </tr>
                     `;
                 });
@@ -698,7 +742,7 @@
 
                     html += `
                         <tr>
-                            <td><strong>${teamName}</strong></td>
+                            <td><strong><span class="team-cell" title="${teamName}">${teamName}</span></strong></td>
                             <td>${team.total_seats}</td>
                             <td>${team.used_seats}</td>
                             <td>${team.pending_invites}</td>
@@ -770,6 +814,25 @@
 
                 alert('删除成功');
                 loadCodes({ force: true });
+                loadStats({ force: true });
+            } catch (error) {
+                alert('删除失败: ' + error.message);
+            }
+        }
+
+        async function deleteRedemption(id) {
+            if (!confirm(`确定要删除此兑换记录吗?\n\nID: ${id}\n\n删除后不可恢复。`)) {
+                return;
+            }
+
+            try {
+                await fetchJson(`/api/admin/redemptions/${id}`, { method: 'DELETE' });
+
+                cacheState.redemptions.ts = 0;
+                cacheState.stats.ts = 0;
+
+                alert('删除成功');
+                loadRedemptions({ force: true });
                 loadStats({ force: true });
             } catch (error) {
                 alert('删除失败: ' + error.message);

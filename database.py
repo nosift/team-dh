@@ -555,6 +555,13 @@ class Database:
                 cursor.execute("DELETE FROM redemptions")
             return cursor.rowcount or 0
 
+    def delete_redemption(self, redemption_id: int) -> bool:
+        """删除单条兑换记录"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM redemptions WHERE id = ?", (int(redemption_id),))
+            return (cursor.rowcount or 0) > 0
+
     # ==================== Team统计管理 ====================
 
     def update_team_stats(
@@ -644,6 +651,12 @@ class Database:
             )
             successful_redemptions = cursor.fetchone()["count"]
 
+            # 失败兑换次数
+            cursor.execute(
+                "SELECT COUNT(*) as count FROM redemptions WHERE invite_status = 'failed'"
+            )
+            failed_redemptions = cursor.fetchone()["count"]
+
             # 今日兑换次数
             cursor.execute(
                 """
@@ -658,6 +671,7 @@ class Database:
                 "active_codes": active_codes,
                 "total_redemptions": total_redemptions,
                 "successful_redemptions": successful_redemptions,
+                "failed_redemptions": failed_redemptions,
                 "today_redemptions": today_redemptions,
             }
 
