@@ -122,7 +122,7 @@ uv run python run.py help
 ## 📁 项目结构
 
 ```
-oai-team-auto-provisioner/
+team-dh/
 │
 ├── 🚀 run.py                 # 主入口脚本
 ├── ⚙️  config.py              # 配置加载模块
@@ -454,7 +454,7 @@ docker-compose down
 docker-compose ps
 
 # 备份数据
-docker cp chatgpt-team-redemption:/app/data/redemption.db ./backup/
+docker cp team-dh:/data/redemption.db ./backup/
 ```
 
 #### 详细文档

@@ -28,8 +28,8 @@
 #### 1. Zeabur部署
 
 ```bash
-# 前提：代码已推送到 GitHub 私有仓库
-https://github.com/nosift/oai-team-auto-provisioner
+# 前提：代码已推送到 GitHub 仓库
+https://github.com/nosift/team-dh
 ```
 
 **Zeabur控制台操作：**
@@ -37,7 +37,7 @@ https://github.com/nosift/oai-team-auto-provisioner
 1. 访问 [https://zeabur.com](https://zeabur.com)
 2. 点击 "New Project"
 3. 选择 "Deploy from GitHub"
-4. 选择仓库：`nosift/oai-team-auto-provisioner`
+4. 选择仓库：`nosift/team-dh`
 5. 配置环境变量（可选）：
    ```
    GUNICORN_WORKERS=1
@@ -74,12 +74,12 @@ railway up
 
 ### 自动构建的镜像
 
-**Docker Hub镜像地址：**
+**GHCR 镜像地址：**
 ```
-nosift/chatgpt-team-redemption:latest
+ghcr.io/nosift/team-dh:latest
 ```
 
-每次推送到GitHub main分支时，会自动构建并推送新镜像到Docker Hub。
+每次推送到GitHub main分支时，会自动构建并推送新镜像到 GHCR。
 
 ### 使用预构建镜像
 
@@ -87,18 +87,18 @@ nosift/chatgpt-team-redemption:latest
 
 ```bash
 # 拉取最新镜像
-docker pull nosift/chatgpt-team-redemption:latest
+docker pull ghcr.io/nosift/team-dh:latest
 
 # 运行容器（需要先准备配置文件）
 docker run -d \
-  --name chatgpt-team-redemption \
+  --name team-dh \
   -p 5000:5000 \
   -v $(pwd)/config.toml:/app/config.toml:ro \
   -v $(pwd)/team.json:/app/team.json:ro \
-  -v $(pwd)/data:/app/data \
+  -v $(pwd)/data:/data \
   -e GUNICORN_WORKERS=2 \
   --restart unless-stopped \
-  nosift/chatgpt-team-redemption:latest
+  ghcr.io/nosift/team-dh:latest
 ```
 
 #### 2. 使用环境变量配置
@@ -106,13 +106,13 @@ docker run -d \
 ```bash
 # 通过环境变量传递配置
 docker run -d \
-  --name chatgpt-team-redemption \
+  --name team-dh \
   -p 5000:5000 \
   -e ADMIN_PASSWORD="your-secure-password" \
   -e TEAM_JSON_B64="<base64(team.json)>" \
   -e GUNICORN_WORKERS=2 \
   --restart unless-stopped \
-  nosift/chatgpt-team-redemption:latest
+  ghcr.io/nosift/team-dh:latest
 ```
 
 ### 在云平台使用镜像
@@ -124,7 +124,7 @@ docker run -d \
 version: '1'
 services:
   app:
-    image: nosift/chatgpt-team-redemption:latest
+    image: ghcr.io/nosift/team-dh:latest
     environment:
       GUNICORN_WORKERS: "1"
       LOG_LEVEL: "INFO"
@@ -136,7 +136,7 @@ services:
 
 大多数支持Docker的平台都可以直接使用镜像名：
 ```
-nosift/chatgpt-team-redemption:latest
+ghcr.io/nosift/team-dh:latest
 ```
 
 ---
@@ -154,8 +154,8 @@ nosift/chatgpt-team-redemption:latest
 
 ```bash
 # 克隆仓库
-git clone https://github.com/nosift/oai-team-auto-provisioner.git
-cd oai-team-auto-provisioner
+git clone https://github.com/nosift/team-dh.git
+cd team-dh
 
 # 配置文件（使用模板）
 cp config.toml.example config.toml
@@ -209,21 +209,21 @@ docker-compose --profile with-nginx up -d
 
 ```bash
 # 使用特定版本
-docker pull nosift/chatgpt-team-redemption:v1.0.0
+docker pull ghcr.io/nosift/team-dh:v1.0.0
 
 # 使用最新版本
-docker pull nosift/chatgpt-team-redemption:latest
+docker pull ghcr.io/nosift/team-dh:latest
 
 # 使用开发版本
-docker pull nosift/chatgpt-team-redemption:develop
+docker pull ghcr.io/nosift/team-dh:develop
 ```
 
 ### 自定义构建
 
 ```bash
 # 从源码构建
-git clone https://github.com/nosift/oai-team-auto-provisioner.git
-cd oai-team-auto-provisioner
+git clone https://github.com/nosift/team-dh.git
+cd team-dh
 docker build -t my-redemption-system .
 
 # 多平台构建
@@ -323,7 +323,7 @@ EOF
 # 2. 运行容器
 docker run -d -p 5000:5000 \
   -v $(pwd)/config.toml:/app/config.toml:ro \
-  nosift/chatgpt-team-redemption:latest
+  ghcr.io/nosift/team-dh:latest
 
 # 3. 访问服务
 open http://localhost:5000

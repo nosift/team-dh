@@ -9,9 +9,9 @@ on:
 
 env:
   DOCKERHUB_REGISTRY: docker.io
-  DOCKERHUB_IMAGE_NAME: nosift/chatgpt-team-redemption
+  DOCKERHUB_IMAGE_NAME: ${{ github.repository }}
   GHCR_REGISTRY: ghcr.io
-  GHCR_IMAGE_NAME: nosift/chatgpt-team-redemption
+  GHCR_IMAGE_NAME: ${{ github.repository }}
 
 jobs:
   build:

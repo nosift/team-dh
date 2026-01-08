@@ -108,7 +108,7 @@ build.bat
 
 **或手动构建:**
 ```bash
-docker build -t chatgpt-team-redemption:latest .
+docker build -t team-dh:latest .
 ```
 
 #### 2. 运行容器
@@ -119,27 +119,27 @@ mkdir -p data
 
 # 启动容器
 docker run -d \
-  --name chatgpt-team-redemption \
+  --name team-dh \
   -p 5000:5000 \
   -v $(pwd)/config.toml:/app/config.toml:ro \
   -v $(pwd)/team.json:/app/team.json:ro \
   -v $(pwd)/data:/app/data \
   -e LOG_LEVEL=INFO \
   --restart unless-stopped \
-  chatgpt-team-redemption:latest
+  team-dh:latest
 ```
 
 **Windows PowerShell:**
 ```powershell
 docker run -d `
-  --name chatgpt-team-redemption `
+  --name team-dh `
   -p 5000:5000 `
   -v ${PWD}/config.toml:/app/config.toml:ro `
   -v ${PWD}/team.json:/app/team.json:ro `
   -v ${PWD}/data:/app/data `
   -e LOG_LEVEL=INFO `
   --restart unless-stopped `
-  chatgpt-team-redemption:latest
+  team-dh:latest
 ```
 
 ---
@@ -147,7 +147,7 @@ docker run -d `
 ## 📁 目录结构
 
 ```
-oai-team-auto-provisioner/
+team-dh/
 ├── Dockerfile              # Docker镜像定义
 ├── docker-compose.yml      # Docker Compose配置
 ├── .dockerignore          # Docker构建忽略文件
@@ -268,10 +268,10 @@ docker-compose build --no-cache
 docker-compose pull
 
 # 查看镜像
-docker images | grep chatgpt-team-redemption
+docker images | grep team-dh
 
 # 删除镜像
-docker rmi chatgpt-team-redemption:latest
+docker rmi team-dh:latest
 ```
 
 ### 数据管理
@@ -281,10 +281,10 @@ docker rmi chatgpt-team-redemption:latest
 docker-compose exec redemption-web cp /app/data/redemption.db /app/data/backup.db
 
 # 导出数据库到宿主机
-docker cp chatgpt-team-redemption:/app/data/redemption.db ./backup/
+docker cp team-dh:/data/redemption.db ./backup/
 
 # 恢复数据库
-docker cp ./backup/redemption.db chatgpt-team-redemption:/app/data/
+docker cp ./backup/redemption.db team-dh:/data/
 ```
 
 ### 兑换码管理
@@ -367,7 +367,7 @@ docker-compose logs --tail=100 redemption-web
 docker ps
 
 # 查看健康检查状态
-docker inspect chatgpt-team-redemption | grep -A 10 Health
+docker inspect team-dh | grep -A 10 Health
 
 # 手动健康检查
 curl http://localhost:5000/health
@@ -377,7 +377,7 @@ curl http://localhost:5000/health
 
 ```bash
 # 查看容器资源使用
-docker stats chatgpt-team-redemption
+docker stats team-dh
 
 # 查看所有容器资源
 docker stats
@@ -436,7 +436,7 @@ cat > backup.sh << 'EOF'
 #!/bin/bash
 BACKUP_DIR="./backups/$(date +%Y%m%d)"
 mkdir -p $BACKUP_DIR
-docker cp chatgpt-team-redemption:/app/data/redemption.db $BACKUP_DIR/
+docker cp team-dh:/data/redemption.db $BACKUP_DIR/
 echo "Backup completed: $BACKUP_DIR"
 EOF
 
@@ -571,20 +571,20 @@ upstream redemption_cluster {
 docker login
 
 # 标记镜像
-docker tag chatgpt-team-redemption:latest your-username/chatgpt-team-redemption:latest
+docker tag team-dh:latest your-username/team-dh:latest
 
 # 推送镜像
-docker push your-username/chatgpt-team-redemption:latest
+docker push your-username/team-dh:latest
 ```
 
 ### 推送到私有Registry
 
 ```bash
 # 标记镜像
-docker tag chatgpt-team-redemption:latest registry.example.com/chatgpt-team-redemption:latest
+docker tag team-dh:latest registry.example.com/team-dh:latest
 
 # 推送
-docker push registry.example.com/chatgpt-team-redemption:latest
+docker push registry.example.com/team-dh:latest
 ```
 
 ---
@@ -625,8 +625,8 @@ docker stats                        # 监控资源
 docker-compose exec redemption-web python code_generator.py stats  # 查看统计
 
 # 备份和恢复
-docker cp chatgpt-team-redemption:/app/data/redemption.db ./backup/  # 备份
-docker cp ./backup/redemption.db chatgpt-team-redemption:/app/data/  # 恢复
+docker cp team-dh:/data/redemption.db ./backup/  # 备份
+docker cp ./backup/redemption.db team-dh:/data/  # 恢复
 ```
 
 ---

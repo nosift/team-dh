@@ -19,7 +19,7 @@
 确保项目根目录有以下文件：
 
 ```
-oai-team-auto-provisioner/
+team-dh/
 ├── Dockerfile              ✅ 已优化为轻量级版本
 ├── docker-compose.yml      ✅ 已优化环境变量支持
 ├── .dockerignore          ✅ 已配置排除规则
