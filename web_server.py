@@ -492,8 +492,8 @@ def admin_bulk_delete_codes():
     try:
         data = request.get_json() or {}
         confirm = (data.get("confirm") or "").strip()
-        if confirm != "DELETE_ALL":
-            return jsonify({"success": False, "error": "缺少确认字段 confirm=DELETE_ALL"}), 400
+        if confirm not in {"DELETE_ALL", "DELLT"}:
+            return jsonify({"success": False, "error": "缺少确认字段 confirm=DELLT"}), 400
 
         team = (data.get("team") or "").strip()
         status = (data.get("status") or "").strip() or None
@@ -533,8 +533,8 @@ def admin_bulk_delete_redemptions():
     try:
         data = request.get_json() or {}
         confirm = (data.get("confirm") or "").strip()
-        if confirm != "DELETE_ALL":
-            return jsonify({"success": False, "error": "缺少确认字段 confirm=DELETE_ALL"}), 400
+        if confirm not in {"DELETE_ALL", "DELLT"}:
+            return jsonify({"success": False, "error": "缺少确认字段 confirm=DELLT"}), 400
 
         team = (data.get("team") or "").strip()
         names = [team] if team else None

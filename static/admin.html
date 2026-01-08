@@ -293,6 +293,15 @@
             border-radius: 4px;
         }
 
+        .copyable {
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .copyable:hover {
+            background: #e5e5e5;
+        }
+
         .team-cell {
             max-width: 180px;
             display: inline-block;
@@ -300,6 +309,76 @@
             text-overflow: ellipsis;
             white-space: nowrap;
             vertical-align: bottom;
+        }
+
+        .ui-toast {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 2000;
+            background: rgba(0, 0, 0, 0.88);
+            color: #fff;
+            padding: 12px 16px;
+            border-radius: 12px;
+            font-size: 14px;
+            max-width: min(560px, 90vw);
+            text-align: center;
+            display: none;
+        }
+
+        .ui-modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 2000;
+            align-items: center;
+            justify-content: center;
+            padding: 16px;
+        }
+
+        .ui-modal {
+            background: #fff;
+            border-radius: 16px;
+            width: min(560px, 92vw);
+            box-shadow: 0 20px 60px rgba(0,0,0,0.25);
+            overflow: hidden;
+        }
+
+        .ui-modal-header {
+            padding: 16px 20px;
+            border-bottom: 1px solid #e5e5e5;
+            font-weight: 600;
+            color: #1d1d1f;
+        }
+
+        .ui-modal-body {
+            padding: 16px 20px;
+            color: #1d1d1f;
+            font-size: 14px;
+            line-height: 1.6;
+        }
+
+        .ui-modal-actions {
+            padding: 16px 20px;
+            display: flex;
+            gap: 12px;
+            justify-content: flex-end;
+            border-top: 1px solid #e5e5e5;
+            background: #fafafa;
+        }
+
+        .ui-input {
+            width: 100%;
+            padding: 12px 14px;
+            border: 1px solid #d2d2d7;
+            border-radius: 10px;
+            font-size: 14px;
+            background: #fff;
         }
     </style>
 </head>
@@ -424,7 +503,7 @@
 
             <div style="margin-bottom: 16px;">
                 <label style="display: block; margin-bottom: 8px; color: #1d1d1f; font-weight: 500;">Team 名称</label>
-                <input type="text" id="teamName" placeholder="例如: wggzwnas" style="width: 100%; padding: 12px; border: 1px solid #d2d2d7; border-radius: 10px; font-size: 14px;">
+                <input type="text" id="teamName" placeholder="用于后台显示（建议简短，如: team-1）" style="width: 100%; padding: 12px; border: 1px solid #d2d2d7; border-radius: 10px; font-size: 14px;">
             </div>
 
             <div style="margin-bottom: 16px;">
@@ -494,6 +573,16 @@
         </div>
     </div>
 
+    <div id="uiToast" class="ui-toast"></div>
+
+    <div id="uiModalOverlay" class="ui-modal-overlay">
+        <div class="ui-modal" role="dialog" aria-modal="true">
+            <div id="uiModalTitle" class="ui-modal-header">提示</div>
+            <div id="uiModalBody" class="ui-modal-body"></div>
+            <div class="ui-modal-actions" id="uiModalActions"></div>
+        </div>
+    </div>
+
     <script>
         // 切换标签页
         function switchTab(evt, tabName) {
@@ -537,6 +626,151 @@
             codes: new Map(), // key -> { ts, data, promise }
         };
 
+        // ==================== UI 提示/弹窗（居中显示） ====================
+        const UI_CONFIRM_PHRASE = 'DELLT';
+
+        function escapeHtml(str) {
+            return String(str ?? '').replace(/[&<>"']/g, (m) => ({
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#39;'
+            }[m]));
+        }
+
+        async function copyText(text) {
+            const t = String(text ?? '');
+            try {
+                if (navigator.clipboard && window.isSecureContext) {
+                    await navigator.clipboard.writeText(t);
+                } else {
+                    const textarea = document.createElement('textarea');
+                    textarea.value = t;
+                    textarea.style.position = 'fixed';
+                    textarea.style.left = '-9999px';
+                    document.body.appendChild(textarea);
+                    textarea.select();
+                    document.execCommand('copy');
+                    document.body.removeChild(textarea);
+                }
+                showToast('已复制', 'success');
+            } catch (e) {
+                showToast('复制失败，请手动复制', 'danger');
+            }
+        }
+
+        function showToast(message, type = 'info', timeoutMs = 1400) {
+            const el = document.getElementById('uiToast');
+            if (!el) return;
+            el.textContent = message;
+            el.style.display = 'block';
+            if (type === 'danger') el.style.background = 'rgba(255, 59, 48, 0.92)';
+            else if (type === 'success') el.style.background = 'rgba(0, 0, 0, 0.88)';
+            else el.style.background = 'rgba(0, 0, 0, 0.88)';
+            clearTimeout(showToast._t);
+            showToast._t = setTimeout(() => { el.style.display = 'none'; }, timeoutMs);
+        }
+
+        function openModal({ title = '提示', bodyHtml = '', actions = [] }) {
+            const overlay = document.getElementById('uiModalOverlay');
+            const titleEl = document.getElementById('uiModalTitle');
+            const bodyEl = document.getElementById('uiModalBody');
+            const actionsEl = document.getElementById('uiModalActions');
+            if (!overlay || !titleEl || !bodyEl || !actionsEl) return;
+
+            titleEl.textContent = title;
+            bodyEl.innerHTML = bodyHtml;
+            actionsEl.innerHTML = '';
+            actions.forEach((a) => actionsEl.appendChild(a));
+
+            overlay.style.display = 'flex';
+        }
+
+        function closeModal() {
+            const overlay = document.getElementById('uiModalOverlay');
+            if (overlay) overlay.style.display = 'none';
+        }
+
+        function makeButton({ text, className = 'refresh-btn', onClick }) {
+            const btn = document.createElement('button');
+            btn.textContent = text;
+            btn.className = className;
+            btn.onclick = onClick;
+            return btn;
+        }
+
+        function uiAlert(message, { title = '提示' } = {}) {
+            return new Promise((resolve) => {
+                const ok = makeButton({
+                    text: '确定',
+                    className: 'refresh-btn',
+                    onClick: () => { closeModal(); resolve(true); }
+                });
+                openModal({
+                    title,
+                    bodyHtml: `<div>${escapeHtml(message)}</div>`,
+                    actions: [ok]
+                });
+            });
+        }
+
+        function uiConfirm(message, { title = '确认', okText = '确定', cancelText = '取消' } = {}) {
+            return new Promise((resolve) => {
+                const cancel = makeButton({
+                    text: cancelText,
+                    className: 'action-btn disable',
+                    onClick: () => { closeModal(); resolve(false); }
+                });
+                const ok = makeButton({
+                    text: okText,
+                    className: 'refresh-btn',
+                    onClick: () => { closeModal(); resolve(true); }
+                });
+                openModal({
+                    title,
+                    bodyHtml: `<div>${escapeHtml(message)}</div>`,
+                    actions: [cancel, ok]
+                });
+            });
+        }
+
+        function uiConfirmPhrase({ title, message, phrase = UI_CONFIRM_PHRASE }) {
+            return new Promise((resolve) => {
+                const safePhrase = escapeHtml(phrase);
+                const bodyHtml = `
+                    <div style="margin-bottom: 12px;">${escapeHtml(message)}</div>
+                    <div style="display:flex; gap:10px; align-items:center; margin-bottom: 12px;">
+                        <code class="copyable" onclick="copyText('${phrase}')">${safePhrase}</code>
+                        <button class="action-btn enable" onclick="copyText('${phrase}')">复制口令</button>
+                    </div>
+                    <input id="uiConfirmInput" class="ui-input" placeholder="粘贴/输入上方口令确认" />
+                `;
+
+                const cancel = makeButton({
+                    text: '取消',
+                    className: 'action-btn disable',
+                    onClick: () => { closeModal(); resolve(false); }
+                });
+                const ok = makeButton({
+                    text: '确认删除',
+                    className: 'action-btn danger',
+                    onClick: () => {
+                        const v = (document.getElementById('uiConfirmInput')?.value || '').trim();
+                        if (v !== phrase) {
+                            showToast('口令不正确', 'danger');
+                            return;
+                        }
+                        closeModal();
+                        resolve(true);
+                    }
+                });
+
+                openModal({ title, bodyHtml, actions: [cancel, ok] });
+                setTimeout(() => document.getElementById('uiConfirmInput')?.focus(), 0);
+            });
+        }
+
         async function fetchJson(url, options) {
             const response = await fetch(url, options);
             const result = await response.json();
@@ -545,6 +779,14 @@
             }
             return result;
         }
+
+        // 点击兑换码复制（事件委托）
+        document.addEventListener('click', (e) => {
+            const el = e.target && e.target.closest ? e.target.closest('.copyable[data-copy]') : null;
+            if (!el) return;
+            const text = el.getAttribute('data-copy');
+            if (text) copyText(text);
+        });
 
         function isFresh(entry, ttlMs) {
             return entry && entry.data && (Date.now() - entry.ts) < ttlMs;
@@ -672,7 +914,7 @@
 
                     html += `
                         <tr>
-                            <td><code>${code.code}</code></td>
+                            <td><code class="copyable" data-copy="${code.code}" title="点击复制">${code.code}</code></td>
                             <td><span class="team-cell" title="${teamName}">${teamName}</span></td>
                             <td>${code.used_count}/${code.max_uses}</td>
                             <td><span class="badge ${statusBadge}">${statusText}</span></td>
@@ -709,7 +951,7 @@
                     html += `
                         <tr>
                             <td>${r.email}</td>
-                            <td><code>${r.code}</code></td>
+                            <td><code class="copyable" data-copy="${r.code}" title="点击复制">${r.code}</code></td>
                             <td><span class="team-cell" title="${teamName}">${teamName}</span></td>
                             <td><span class="badge ${statusBadge}">${r.invite_status}</span></td>
                             <td>${time}</td>
@@ -768,20 +1010,19 @@
             try {
                 const result = await fetchJson('/api/admin/teams/refresh-stats', { method: 'POST' });
                 cacheState.stats.ts = 0;
-                alert(`刷新成功！\n\n${result.message}`);
+                showToast(result.message || '刷新成功', 'success', 1800);
                 loadTeamStats({ force: true });
                 loadStats({ force: true });
             } catch (error) {
-                alert('刷新失败: ' + error.message);
+                showToast('刷新失败: ' + error.message, 'danger', 2200);
                 loadTeamStats({ force: true });
             }
         }
 
         // 更新兑换码状态
         async function updateCodeStatus(code, status) {
-            if (!confirm(`确定要${status === 'active' ? '启用' : '禁用'}此兑换码吗?`)) {
-                return;
-            }
+            const ok = await uiConfirm(`确定要${status === 'active' ? '启用' : '禁用'}此兑换码吗?`, { title: '确认操作' });
+            if (!ok) return;
 
             try {
                 await fetchJson(`/api/admin/codes/${encodeURIComponent(code)}/status`, {
@@ -793,18 +1034,17 @@
                 cacheState.codes.clear();
                 cacheState.stats.ts = 0;
 
-                alert('更新成功');
+                showToast('更新成功', 'success');
                 loadCodes({ force: true });
                 loadStats({ force: true });
             } catch (error) {
-                alert('更新失败: ' + error.message);
+                showToast('更新失败: ' + error.message, 'danger', 2200);
             }
         }
 
         async function deleteCode(code) {
-            if (!confirm(`确定要删除此兑换码吗?\n\n${code}\n\n删除后将无法兑换。`)) {
-                return;
-            }
+            const ok = await uiConfirm(`确定要删除此兑换码吗?\n\n${code}\n\n删除后将无法兑换。`, { title: '确认删除', okText: '删除' });
+            if (!ok) return;
 
             try {
                 await fetchJson(`/api/admin/codes/${encodeURIComponent(code)}`, { method: 'DELETE' });
@@ -812,18 +1052,17 @@
                 cacheState.codes.clear();
                 cacheState.stats.ts = 0;
 
-                alert('删除成功');
+                showToast('删除成功', 'success');
                 loadCodes({ force: true });
                 loadStats({ force: true });
             } catch (error) {
-                alert('删除失败: ' + error.message);
+                showToast('删除失败: ' + error.message, 'danger', 2200);
             }
         }
 
         async function deleteRedemption(id) {
-            if (!confirm(`确定要删除此兑换记录吗?\n\nID: ${id}\n\n删除后不可恢复。`)) {
-                return;
-            }
+            const ok = await uiConfirm(`确定要删除此兑换记录吗?\n\nID: ${id}\n\n删除后不可恢复。`, { title: '确认删除', okText: '删除' });
+            if (!ok) return;
 
             try {
                 await fetchJson(`/api/admin/redemptions/${id}`, { method: 'DELETE' });
@@ -831,11 +1070,11 @@
                 cacheState.redemptions.ts = 0;
                 cacheState.stats.ts = 0;
 
-                alert('删除成功');
+                showToast('删除成功', 'success');
                 loadRedemptions({ force: true });
                 loadStats({ force: true });
             } catch (error) {
-                alert('删除失败: ' + error.message);
+                showToast('删除失败: ' + error.message, 'danger', 2200);
             }
         }
 
@@ -843,48 +1082,54 @@
             const team = document.getElementById('teamFilter').value;
             const status = document.getElementById('statusFilter').value;
 
-            const tip = `将删除当前筛选下的全部兑换码：\n\nTeam: ${team || '所有Team'}\n状态: ${status || '所有状态'}\n\n请输入 DELETE_ALL 确认：`;
-            const confirmation = prompt(tip);
-            if (confirmation !== 'DELETE_ALL') return;
+            const ok = await uiConfirmPhrase({
+                title: '危险操作',
+                message: `将删除当前筛选下的全部兑换码：\n\nTeam: ${team || '所有Team'}\n状态: ${status || '所有状态'}`,
+                phrase: UI_CONFIRM_PHRASE
+            });
+            if (!ok) return;
 
             try {
                 const result = await fetchJson('/api/admin/codes/bulk-delete', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ confirm: 'DELETE_ALL', team, status })
+                    body: JSON.stringify({ confirm: UI_CONFIRM_PHRASE, team, status })
                 });
 
                 cacheState.codes.clear();
                 cacheState.stats.ts = 0;
 
-                alert(result.message || '已删除');
+                showToast(result.message || '已删除', 'success', 1800);
                 loadCodes({ force: true });
                 loadStats({ force: true });
             } catch (error) {
-                alert('全部删除失败: ' + error.message);
+                showToast('全部删除失败: ' + error.message, 'danger', 2400);
             }
         }
 
         async function bulkDeleteRedemptions() {
-            const tip = `将删除全部兑换记录（不可恢复）。\n\n请输入 DELETE_ALL 确认：`;
-            const confirmation = prompt(tip);
-            if (confirmation !== 'DELETE_ALL') return;
+            const ok = await uiConfirmPhrase({
+                title: '危险操作',
+                message: '将删除全部兑换记录（不可恢复）。',
+                phrase: UI_CONFIRM_PHRASE
+            });
+            if (!ok) return;
 
             try {
                 const result = await fetchJson('/api/admin/redemptions/bulk-delete', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ confirm: 'DELETE_ALL' })
+                    body: JSON.stringify({ confirm: UI_CONFIRM_PHRASE })
                 });
 
                 cacheState.redemptions.ts = 0;
                 cacheState.stats.ts = 0;
 
-                alert(result.message || '已删除');
+                showToast(result.message || '已删除', 'success', 1800);
                 loadRedemptions({ force: true });
                 loadStats({ force: true });
             } catch (error) {
-                alert('全部删除失败: ' + error.message);
+                showToast('全部删除失败: ' + error.message, 'danger', 2400);
             }
         }
 
@@ -991,7 +1236,7 @@
                 const teams = await getTeams();
                 const team = teams.find(t => t.index === index) || teams[index];
                 if (!team) {
-                    alert('Team不存在');
+                    showToast('Team不存在', 'danger');
                     return;
                 }
 
@@ -1003,7 +1248,7 @@
                 document.getElementById('teamAccessToken').value = ''; // 不显示已有token
                 document.getElementById('teamModal').style.display = 'flex';
             } catch (error) {
-                alert('加载Team信息失败: ' + error.message);
+                showToast('加载Team信息失败: ' + error.message, 'danger', 2200);
             }
         }
 
@@ -1017,13 +1262,13 @@
             const accessToken = document.getElementById('teamAccessToken').value.trim();
 
             if (!name || !email || !userId || !accountId || !orgId) {
-                alert('请填写所有必填字段');
+                showToast('请填写所有必填字段', 'danger', 2000);
                 return;
             }
 
             // 添加新Team时必须提供token
             if (currentEditingTeamIndex === null && !accessToken) {
-                alert('添加新Team时必须提供Access Token');
+                showToast('添加新Team时必须提供Access Token', 'danger', 2200);
                 return;
             }
 
@@ -1050,7 +1295,7 @@
                     });
                 }
 
-                alert(result.message || '保存成功');
+                showToast(result.message || '保存成功', 'success', 1800);
                 closeTeamModal();
                 cacheState.teams.ts = 0;
                 loadTeamList({ force: true });
@@ -1060,19 +1305,18 @@
                     window.location.href = '/admin/login';
                     return;
                 }
-                alert('保存失败: ' + error.message);
+                showToast('保存失败: ' + error.message, 'danger', 2400);
             }
         }
 
         // 删除 Team
         async function deleteTeam(index, name) {
-            if (!confirm(`确定要删除Team "${name}" 吗？\n\n此操作不可恢复！`)) {
-                return;
-            }
+            const ok = await uiConfirm(`确定要删除Team "${name}" 吗？\n\n此操作不可恢复！`, { title: '确认删除', okText: '删除' });
+            if (!ok) return;
 
             try {
                 const result = await fetchJson(`/api/admin/teams/${index}?cleanup=true`, { method: 'DELETE' });
-                alert(result.message || '删除成功');
+                showToast(result.message || '删除成功', 'success', 2400);
                 cacheState.teams.ts = 0;
                 cacheState.codes.clear();
                 cacheState.redemptions.ts = 0;
@@ -1087,7 +1331,7 @@
                     window.location.href = '/admin/login';
                     return;
                 }
-                alert('删除失败: ' + error.message);
+                showToast('删除失败: ' + error.message, 'danger', 2400);
             }
         }
 
@@ -1115,12 +1359,12 @@
             const expiresDays = expiresDaysInput ? parseInt(expiresDaysInput) : null;
 
             if (!count || count < 1 || count > 1000) {
-                alert('生成数量必须在 1-1000 之间');
+                showToast('生成数量必须在 1-1000 之间', 'danger', 2200);
                 return;
             }
 
             if (!maxUses || maxUses < 1) {
-                alert('最大使用次数必须大于 0');
+                showToast('最大使用次数必须大于 0', 'danger', 2200);
                 return;
             }
 
@@ -1139,23 +1383,28 @@
                 const codes = result.data.codes;
                 const codesText = codes.join('\n');
 
-                // 复制到剪贴板
-                try {
-                    if (navigator.clipboard && window.isSecureContext) {
-                        await navigator.clipboard.writeText(codesText);
-                    } else {
-                        const textarea = document.createElement('textarea');
-                        textarea.value = codesText;
-                        document.body.appendChild(textarea);
-                        textarea.select();
-                        document.execCommand('copy');
-                        document.body.removeChild(textarea);
-                    }
-                } catch (e) {
-                    // 忽略复制失败：仍然把兑换码展示给用户
-                }
+                await copyText(codesText);
 
-                alert(`成功生成 ${codes.length} 个兑换码！\n\n兑换码已复制到剪贴板。\n\n${codesText}`);
+                const copyBtn = makeButton({
+                    text: '复制全部',
+                    className: 'action-btn enable',
+                    onClick: () => copyText(codesText)
+                });
+                const okBtn = makeButton({
+                    text: '关闭',
+                    className: 'refresh-btn',
+                    onClick: () => closeModal()
+                });
+
+                openModal({
+                    title: `生成成功（${codes.length} 个）`,
+                    bodyHtml: `
+                        <div style="margin-bottom:10px;">兑换码已复制到剪贴板。</div>
+                        <textarea class="ui-input" style="height: 180px; font-family: 'SF Mono', Monaco, monospace;" readonly>${escapeHtml(codesText)}</textarea>
+                        <div style="margin-top:10px; color:#86868b; font-size:12px;">也可以点击表格中的兑换码直接复制。</div>
+                    `,
+                    actions: [copyBtn, okBtn]
+                });
                 closeGenerateCodesModal();
                 cacheState.codes.clear();
                 cacheState.stats.ts = 0;
@@ -1169,7 +1418,7 @@
                     window.location.href = '/admin/login';
                     return;
                 }
-                alert('生成失败: ' + error.message);
+                showToast('生成失败: ' + error.message, 'danger', 2400);
             }
         }
 
