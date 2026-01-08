@@ -10,6 +10,8 @@ from database import db
 from team_service import batch_invite_to_team, get_team_stats
 from logger import log
 import config
+from date_utils import add_months_same_day
+import os
 
 
 class RedemptionService:
@@ -109,6 +111,33 @@ class RedemptionService:
 
                 # 10. 更新Team统计
                 RedemptionService._update_team_stats(team_name)
+
+                # 11. 记录“成员租约”（用于按月到期自动转移到新 Team）
+                try:
+                    now = datetime.now()
+                    team_cfg = config.resolve_team(team_name) or {}
+                    team_account_id = team_cfg.get("account_id")
+                    term_months = int(os.getenv("AUTO_TRANSFER_TERM_MONTHS", "1") or 1)
+                    expires_at = add_months_same_day(now, max(1, min(24, term_months)))
+
+                    existed = db.get_member_lease(email) is not None
+                    db.upsert_member_lease(
+                        email=email,
+                        team_name=team_name,
+                        team_account_id=team_account_id,
+                        start_at=now,
+                        expires_at=expires_at,
+                    )
+                    if not existed:
+                        db.add_member_lease_event(
+                            email=email,
+                            action="created",
+                            from_team=None,
+                            to_team=team_name,
+                            message=f"创建租约：到期 {expires_at.date().isoformat()}",
+                        )
+                except Exception as e:
+                    log.warning(f"写入成员租约失败（不影响兑换流程）: {e}")
 
                 log.info(f"{email} 兑换成功", icon="success")
 

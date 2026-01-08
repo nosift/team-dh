@@ -109,6 +109,45 @@ class Database:
                 )
             """)
 
+            # 成员租约：用于“按月到期自动转移到新 Team”
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS member_leases (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    email VARCHAR(255) UNIQUE NOT NULL,
+                    team_name VARCHAR(100) NOT NULL,
+                    team_account_id VARCHAR(128),
+                    start_at DATETIME NOT NULL,
+                    expires_at DATETIME NOT NULL,
+                    status VARCHAR(32) DEFAULT 'active',
+                    transfer_count INTEGER DEFAULT 0,
+                    attempts INTEGER DEFAULT 0,
+                    next_attempt_at DATETIME,
+                    last_error TEXT,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS member_lease_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    email VARCHAR(255) NOT NULL,
+                    from_team VARCHAR(100),
+                    to_team VARCHAR(100),
+                    action VARCHAR(32) NOT NULL,
+                    message TEXT,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+            # 全局锁（防止多 worker 重复执行后台任务）
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS app_locks (
+                    name VARCHAR(64) PRIMARY KEY,
+                    locked_by TEXT,
+                    locked_until DATETIME
+                )
+            """)
+
             # 创建索引
             cursor.execute("""
                 CREATE INDEX IF NOT EXISTS idx_code ON redemption_codes(code)
@@ -119,8 +158,200 @@ class Database:
             cursor.execute("""
                 CREATE INDEX IF NOT EXISTS idx_team ON redemption_codes(team_name)
             """)
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_member_leases_expires ON member_leases(expires_at)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_member_leases_next_attempt ON member_leases(next_attempt_at)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_member_events_email ON member_lease_events(email)")
 
             log.info("数据库初始化完成", icon="success")
+
+    # ==================== 全局锁（后台任务） ====================
+
+    def acquire_lock(self, name: str, *, lock_by: str, lock_seconds: int = 90) -> bool:
+        """尝试获取全局锁（SQLite 多进程/多 worker 共享）。"""
+        if not name:
+            return False
+        now = datetime.now()
+        now_str = now.isoformat(sep=" ", timespec="seconds")
+        until_str = (now + timedelta(seconds=max(5, int(lock_seconds or 90)))).isoformat(
+            sep=" ", timespec="seconds"
+        )
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO app_locks (name, locked_by, locked_until)
+                VALUES (?, ?, ?)
+                ON CONFLICT(name) DO UPDATE SET
+                    locked_by = excluded.locked_by,
+                    locked_until = excluded.locked_until
+                WHERE app_locks.locked_until IS NULL OR app_locks.locked_until <= ?
+            """,
+                (name, lock_by, until_str, now_str),
+            )
+            return cursor.rowcount == 1
+
+    def release_lock(self, name: str, *, lock_by: str):
+        """释放锁（仅释放自己持有的锁）。"""
+        if not name:
+            return
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE app_locks SET locked_by = NULL, locked_until = NULL WHERE name = ? AND locked_by = ?",
+                (name, lock_by),
+            )
+
+    # ==================== 成员租约（按月转移） ====================
+
+    def upsert_member_lease(
+        self,
+        *,
+        email: str,
+        team_name: str,
+        team_account_id: str | None,
+        start_at: datetime,
+        expires_at: datetime,
+    ):
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO member_leases (email, team_name, team_account_id, start_at, expires_at, status, updated_at)
+                VALUES (?, ?, ?, ?, ?, 'active', CURRENT_TIMESTAMP)
+                ON CONFLICT(email) DO UPDATE SET
+                    team_name = excluded.team_name,
+                    team_account_id = excluded.team_account_id,
+                    start_at = excluded.start_at,
+                    expires_at = excluded.expires_at,
+                    status = 'active',
+                    updated_at = CURRENT_TIMESTAMP
+            """,
+                (
+                    email,
+                    team_name,
+                    team_account_id,
+                    start_at.isoformat(sep=" ", timespec="seconds"),
+                    expires_at.isoformat(sep=" ", timespec="seconds"),
+                ),
+            )
+
+    def add_member_lease_event(
+        self,
+        *,
+        email: str,
+        action: str,
+        from_team: str | None = None,
+        to_team: str | None = None,
+        message: str | None = None,
+    ):
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO member_lease_events (email, from_team, to_team, action, message)
+                VALUES (?, ?, ?, ?, ?)
+            """,
+                (email, from_team, to_team, action, message),
+            )
+
+    def list_due_member_leases(self, *, limit: int = 20) -> List[Dict[str, Any]]:
+        now = datetime.now().isoformat(sep=" ", timespec="seconds")
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT *
+                FROM member_leases
+                WHERE expires_at <= ?
+                  AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
+                  AND status IN ('active', 'awaiting_transfer')
+                ORDER BY expires_at ASC
+                LIMIT ?
+            """,
+                (now, now, int(limit)),
+            )
+            return [dict(row) for row in cursor.fetchall()]
+
+    def get_member_lease(self, email: str) -> Optional[Dict[str, Any]]:
+        email = (email or "").strip().lower()
+        if not email:
+            return None
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM member_leases WHERE email = ?", (email,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def mark_member_lease_transferring(self, email: str) -> bool:
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                UPDATE member_leases
+                SET status = 'transferring', updated_at = CURRENT_TIMESTAMP
+                WHERE email = ?
+                  AND status IN ('active', 'awaiting_transfer')
+            """,
+                (email,),
+            )
+            return cursor.rowcount == 1
+
+    def update_member_lease_transfer_success(
+        self,
+        *,
+        email: str,
+        new_team_name: str,
+        new_team_account_id: str | None,
+        start_at: datetime,
+        expires_at: datetime,
+    ):
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                UPDATE member_leases
+                SET team_name = ?,
+                    team_account_id = ?,
+                    start_at = ?,
+                    expires_at = ?,
+                    status = 'active',
+                    transfer_count = transfer_count + 1,
+                    attempts = 0,
+                    next_attempt_at = NULL,
+                    last_error = NULL,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE email = ?
+            """,
+                (
+                    new_team_name,
+                    new_team_account_id,
+                    start_at.isoformat(sep=" ", timespec="seconds"),
+                    expires_at.isoformat(sep=" ", timespec="seconds"),
+                    email,
+                ),
+            )
+
+    def update_member_lease_transfer_failure(
+        self,
+        *,
+        email: str,
+        message: str,
+        next_attempt_at: datetime,
+    ):
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                UPDATE member_leases
+                SET status = 'awaiting_transfer',
+                    attempts = attempts + 1,
+                    next_attempt_at = ?,
+                    last_error = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE email = ?
+            """,
+                (next_attempt_at.isoformat(sep=" ", timespec="seconds"), message, email),
+            )
 
     def _ensure_code_lock_columns(self):
         with self.get_connection() as conn:

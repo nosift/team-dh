@@ -13,6 +13,7 @@ from database import db
 from logger import log
 import config
 import ipaddress
+from transfer_service import start_transfer_worker
 
 
 app = Flask(__name__)
@@ -33,6 +34,9 @@ app.secret_key = _secret_key  # 用于 session 加密
 # 配置
 ADMIN_PASSWORD = config.get("web.admin_password", "admin123")
 ENABLE_ADMIN = config.get("web.enable_admin", True)
+
+# 后台：按月到期自动转移（默认关闭，通过 AUTO_TRANSFER_ENABLED=true 开启）
+start_transfer_worker()
 
 
 _last_config_reload_sig: tuple[float, float, int, int] | None = None

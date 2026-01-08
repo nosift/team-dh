@@ -207,6 +207,29 @@ LOG_LEVEL=INFO
 
 # 时区
 TZ=Asia/Shanghai
+
+# 管理后台密码（生产环境必填）
+ADMIN_PASSWORD=your-secure-password
+
+# Flask session 加密密钥（生产环境必填；多进程/多实例必须固定，否则登录态会随机失效）
+SECRET_KEY=
+
+# 数据目录（建议挂载到持久化卷，比如 /data 或 /app/data）
+DATA_DIR=/data
+
+# SQLite 数据库文件路径（建议放在 DATA_DIR 里，避免重启丢数据）
+REDEMPTION_DATABASE_FILE=/data/redemption.db
+
+# 兑换码并发锁占用时间（秒）
+REDEMPTION_CODE_LOCK_SECONDS=120
+
+# 反向代理信任（用于获取真实客户端 IP）
+TRUST_PROXY=true
+
+# 自动转移（按月到期后自动邀请到新 Team；不会“踢出旧 Team”）
+AUTO_TRANSFER_ENABLED=false
+AUTO_TRANSFER_TERM_MONTHS=1
+AUTO_TRANSFER_POLL_SECONDS=300
 ```
 
 ### Dockerfile 分析
