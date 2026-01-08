@@ -12,7 +12,7 @@ if ! command -v docker &> /dev/null; then
 fi
 
 # 镜像名称和标签
-IMAGE_NAME="chatgpt-team-redemption"
+IMAGE_NAME="team-dh"
 VERSION="${1:-latest}"
 FULL_IMAGE_NAME="${IMAGE_NAME}:${VERSION}"
 
@@ -40,8 +40,10 @@ echo "   docker-compose up -d"
 echo ""
 echo "或者直接运行:"
 echo "   docker run -d -p 5000:5000 \\"
-echo "     -v \$(pwd)/config.toml:/app/config.toml:ro \\"
-echo "     -v \$(pwd)/team.json:/app/team.json:ro \\"
-echo "     -v \$(pwd)/data:/app/data \\"
-echo "     --name chatgpt-team-redemption \\"
+echo "     -v \$(pwd)/config.toml:/data/config.toml:ro \\"
+echo "     -v \$(pwd)/team.json:/data/team.json:ro \\"
+echo "     -v \$(pwd)/data:/data \\"
+echo "     -e DATA_DIR=/data \\"
+echo "     -e REDEMPTION_DATABASE_FILE=/data/redemption.db \\"
+echo "     --name team-dh \\"
 echo "     ${FULL_IMAGE_NAME}"

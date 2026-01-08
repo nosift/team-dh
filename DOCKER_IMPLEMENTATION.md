@@ -78,7 +78,7 @@ python:3.12-slim
 
 ### 最终镜像
 ```
-chatgpt-team-redemption:latest
+ghcr.io/nosift/team-dh:latest
 ```
 
 ### 镜像大小
@@ -110,15 +110,17 @@ http://localhost:5000/
 
 ```bash
 # 构建
-docker build -t chatgpt-team-redemption .
+docker build -t team-dh .
 
 # 运行
 docker run -d \
   -p 5000:5000 \
-  -v $(pwd)/config.toml:/app/config.toml:ro \
-  -v $(pwd)/team.json:/app/team.json:ro \
-  -v $(pwd)/data:/app/data \
-  chatgpt-team-redemption
+  -v $(pwd)/config.toml:/data/config.toml:ro \
+  -v $(pwd)/team.json:/data/team.json:ro \
+  -v $(pwd)/data:/data \
+  -e DATA_DIR=/data \
+  -e REDEMPTION_DATABASE_FILE=/data/redemption.db \
+  team-dh
 ```
 
 ### 方式3: 一键脚本
@@ -234,10 +236,10 @@ docker-compose ps           # 查看状态
 ### 数据管理
 ```bash
 # 备份
-docker cp chatgpt-team-redemption:/app/data/redemption.db ./backup/
+docker cp team-dh:/data/redemption.db ./backup/
 
 # 恢复
-docker cp ./backup/redemption.db chatgpt-team-redemption:/app/data/
+docker cp ./backup/redemption.db team-dh:/data/
 
 # 生成兑换码
 docker-compose exec redemption-web python code_generator.py generate --team TeamA --count 10
@@ -246,7 +248,7 @@ docker-compose exec redemption-web python code_generator.py generate --team Team
 ### 镜像管理
 ```bash
 docker images                              # 查看镜像
-docker rmi chatgpt-team-redemption        # 删除镜像
+docker rmi team-dh        # 删除镜像
 docker-compose build --no-cache           # 重新构建
 ```
 
@@ -293,7 +295,7 @@ docker-compose logs > app.log
 docker stats
 
 # 查看特定容器
-docker stats chatgpt-team-redemption
+docker stats team-dh
 ```
 
 ---
@@ -344,20 +346,20 @@ docker-compose exec redemption-web chown -R appuser:appuser /app/data
 docker login
 
 # 标记
-docker tag chatgpt-team-redemption:latest username/chatgpt-team-redemption:latest
+docker tag team-dh:latest username/team-dh:latest
 
 # 推送
-docker push username/chatgpt-team-redemption:latest
+docker push username/team-dh:latest
 ```
 
 ### 私有Registry
 
 ```bash
 # 标记
-docker tag chatgpt-team-redemption:latest registry.example.com/chatgpt-team-redemption:latest
+docker tag team-dh:latest registry.example.com/team-dh:latest
 
 # 推送
-docker push registry.example.com/chatgpt-team-redemption:latest
+docker push registry.example.com/team-dh:latest
 ```
 
 ---

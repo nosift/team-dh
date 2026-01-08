@@ -220,7 +220,7 @@ https://chatgpt.com/api/auth/session
 配置完成后，你的项目目录应该是这样的：
 
 ```
-oai-team-auto-provisioner/
+team-dh/
 ├── config.toml          ✅ 已创建，已修改密码
 ├── team.json            ⭐ 你需要创建这个
 │

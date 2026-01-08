@@ -11,7 +11,7 @@ if errorlevel 1 (
 )
 
 REM 镜像名称和标签
-set IMAGE_NAME=chatgpt-team-redemption
+set IMAGE_NAME=team-dh
 set VERSION=%1
 if "%VERSION%"=="" set VERSION=latest
 set FULL_IMAGE_NAME=%IMAGE_NAME%:%VERSION%
@@ -40,10 +40,12 @@ echo    docker-compose up -d
 echo.
 echo 或者直接运行:
 echo    docker run -d -p 5000:5000 ^
-echo      -v %CD%\config.toml:/app/config.toml:ro ^
-echo      -v %CD%\team.json:/app/team.json:ro ^
-echo      -v %CD%\data:/app/data ^
-echo      --name chatgpt-team-redemption ^
+echo      -v %CD%\config.toml:/data/config.toml:ro ^
+echo      -v %CD%\team.json:/data/team.json:ro ^
+echo      -v %CD%\data:/data ^
+echo      -e DATA_DIR=/data ^
+echo      -e REDEMPTION_DATABASE_FILE=/data/redemption.db ^
+echo      --name team-dh ^
 echo      %FULL_IMAGE_NAME%
 
 pause

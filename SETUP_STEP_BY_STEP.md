@@ -44,7 +44,7 @@
 
 ```bash
 # Windows命令提示符
-cd d:\vscode_所有项目\oai-team-auto-provisioner
+cd d:\vscode_所有项目\team-dh
 
 # 然后安装
 pip install flask gunicorn
@@ -317,7 +317,7 @@ python start_redemption.py
 完成后，你的目录应该有这些文件：
 
 ```
-oai-team-auto-provisioner/
+team-dh/
 │
 ├── config.toml          ✓ 你创建的
 ├── team.json            ✓ 你创建的

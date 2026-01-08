@@ -1,7 +1,7 @@
 [project]
-name = "oai-team-auto-provisioner"
+name = "team-dh"
 version = "0.1.0"
-description = "OpenAI Team 账号自动批量注册 & CRS 入库工具"
+description = "ChatGPT Team redemption code system (Zeabur/Docker-friendly)"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [

@@ -6,21 +6,23 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: chatgpt-team-redemption
+    container_name: team-dh
     restart: unless-stopped
     ports:
       - "${WEB_PORT:-5000}:5000"
     volumes:
       # 持久化数据库文件
-      - ./redemption.db:/app/redemption.db
+      - ./data:/data
       # 挂载配置文件 (只读)
-      - ./config.toml:/app/config.toml:ro
-      - ./team.json:/app/team.json:ro
+      - ./config.toml:/data/config.toml:ro
+      - ./team.json:/data/team.json:ro
     environment:
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - PYTHONUNBUFFERED=1
       - GUNICORN_WORKERS=${GUNICORN_WORKERS:-2}
       - GUNICORN_TIMEOUT=${GUNICORN_TIMEOUT:-120}
+      - DATA_DIR=/data
+      - REDEMPTION_DATABASE_FILE=/data/redemption.db
     healthcheck:
       test: ["CMD-SHELL", "python -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:5000/health\", timeout=5)' || exit 1"]
       interval: 30s
@@ -36,7 +38,7 @@ services:
   # Nginx 反向代理 (可选,用于生产环境)
   nginx:
     image: nginx:alpine
-    container_name: chatgpt-team-nginx
+    container_name: team-dh-nginx
     restart: unless-stopped
     ports:
       - "${NGINX_HTTP_PORT:-80}:80"

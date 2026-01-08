@@ -24,10 +24,10 @@
 
 ```bash
 # Windows
-cd d:\vscode_所有项目\oai-team-auto-provisioner
+cd d:\vscode_所有项目\team-dh
 
 # Linux/macOS
-cd /path/to/oai-team-auto-provisioner
+cd /path/to/team-dh
 ```
 
 安装依赖：
@@ -285,7 +285,7 @@ http://localhost:5000/admin
 完成后，你的项目目录应该是这样的：
 
 ```
-oai-team-auto-provisioner/
+team-dh/
 ├── config.toml              ← 你创建的配置文件
 ├── team.json                ← 你创建的Team凭证
 ├── redemption.db            ← 自动生成的数据库
