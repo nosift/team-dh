@@ -122,7 +122,12 @@ def run_transfer_once(*, limit: int = 20) -> int:
             transferred = False
             last_err = ""
 
-            kick_old = _env_bool("AUTO_TRANSFER_KICK_OLD_TEAM", False)
+            # “自动退旧 Team”：本质是用 Team 管理员 token 把成员从旧 Team 移除
+            # 兼容旧变量名 AUTO_TRANSFER_KICK_OLD_TEAM
+            kick_old = (
+                _env_bool("AUTO_TRANSFER_AUTO_LEAVE_OLD_TEAM", False)
+                or _env_bool("AUTO_TRANSFER_KICK_OLD_TEAM", False)
+            )
             kicked_old = False
 
             for t in candidates:
@@ -137,7 +142,7 @@ def run_transfer_once(*, limit: int = 20) -> int:
                         break
                     ok_kick, kick_msg = remove_member_by_email(old_cfg, email)
                     if not ok_kick:
-                        last_err = f"踢出旧 Team 失败: {kick_msg}"
+                        last_err = f"退出旧 Team 失败: {kick_msg}"
                         break
                     kicked_old = True
 

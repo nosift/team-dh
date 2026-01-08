@@ -232,6 +232,8 @@ AUTO_TRANSFER_TERM_MONTHS=1
 AUTO_TRANSFER_POLL_SECONDS=300
 # 是否强制踢出旧 Team 成员（需要后端接口支持；开启后若踢人失败将不会转移）
 AUTO_TRANSFER_KICK_OLD_TEAM=false
+# 是否自动退出旧 Team（等价于“踢出旧 Team”，只是命名更贴近业务；建议使用此变量）
+AUTO_TRANSFER_AUTO_LEAVE_OLD_TEAM=false
 ```
 
 ### Dockerfile 分析
