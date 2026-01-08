@@ -37,6 +37,7 @@ http_session = create_session_with_retry()
 
 _CACHE_TTL_SECONDS = 12
 _invites_cache: dict[str, tuple[float, list]] = {}
+_members_cache: dict[str, tuple[float, list]] = {}
 
 
 def _is_pending_invite(invite: dict) -> bool:
@@ -309,6 +310,203 @@ def get_pending_invites(team: dict, *, max_items: int = 500) -> list:
 
     return pending
 
+
+def get_all_invites(team: dict, *, max_items: int = 500) -> list:
+    """获取 Team 的邀请列表（包含已接受/已结束）。"""
+    cache_key = team.get("account_id") or team.get("name") or ""
+    if cache_key:
+        cached = _invites_cache.get(cache_key)
+        if cached and (time() - cached[0]) < _CACHE_TTL_SECONDS:
+            return cached[1]
+
+    headers = build_invite_headers(team)
+
+    items_all: list = []
+    offset = 0
+    limit = 100
+
+    try:
+        while len(items_all) < max_items:
+            url = (
+                f"https://chatgpt.com/backend-api/accounts/{team['account_id']}/invites"
+                f"?offset={offset}&limit={limit}&query="
+            )
+            response = http_session.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
+            if response.status_code != 200:
+                break
+            data = response.json()
+            items = _extract_invite_items(data)
+            if not items:
+                break
+            items_all.extend([i for i in items if isinstance(i, dict)])
+
+            offset += len(items)
+            if len(items) < limit:
+                break
+    except Exception as e:
+        log.warning(f"获取邀请列表异常: {e}")
+
+    if cache_key:
+        _invites_cache[cache_key] = (time(), items_all)
+
+    return items_all[:max_items]
+
+
+def get_invite_status_for_email(team: dict, email: str) -> dict:
+    """
+    查询某个邮箱在该 Team 的邀请状态。
+
+    返回示例：
+      {"found": True, "status": "accepted", "timestamp": "...", "raw": {...}}
+    """
+    target = (email or "").strip().lower()
+    if not target:
+        return {"found": False}
+
+    items = get_all_invites(team, max_items=500)
+    for inv in items:
+        e = (inv.get("email_address") or inv.get("email") or inv.get("emailAddress") or "").strip().lower()
+        if e != target:
+            continue
+
+        status = (
+            (inv.get("status") or inv.get("invite_status") or inv.get("state") or "")
+            .strip()
+            .lower()
+        )
+        # 时间字段尽量取“接受/完成”时间
+        ts = (
+            inv.get("accepted_at")
+            or inv.get("acceptedAt")
+            or inv.get("completed_at")
+            or inv.get("completedAt")
+            or inv.get("updated_at")
+            or inv.get("updatedAt")
+            or inv.get("created_at")
+            or inv.get("createdAt")
+        )
+        return {"found": True, "status": status, "timestamp": ts, "raw": inv}
+
+    return {"found": False}
+
+
+def get_team_members(team: dict, *, max_items: int = 500) -> list:
+    """
+    获取 Team 成员列表（用于按邮箱踢出旧 Team）。
+
+    注意：ChatGPT 后端接口可能会变更；此函数尽量兼容不同返回结构。
+    """
+    cache_key = team.get("account_id") or team.get("name") or ""
+    if cache_key:
+        cached = _members_cache.get(cache_key)
+        if cached and (time() - cached[0]) < _CACHE_TTL_SECONDS:
+            return cached[1]
+
+    headers = build_invite_headers(team)
+    items_all: list = []
+    offset = 0
+    limit = 100
+
+    candidates = [
+        f"https://chatgpt.com/backend-api/accounts/{team['account_id']}/members",
+        f"https://chatgpt.com/backend-api/accounts/{team['account_id']}/members?offset={{offset}}&limit={{limit}}",
+    ]
+
+    def extract(payload) -> list:
+        if isinstance(payload, list):
+            return payload
+        if isinstance(payload, dict):
+            for k in ("items", "members", "data"):
+                v = payload.get(k)
+                if isinstance(v, list):
+                    return v
+                if isinstance(v, dict) and isinstance(v.get("items"), list):
+                    return v["items"]
+        return []
+
+    try:
+        while len(items_all) < max_items:
+            url = candidates[1].format(offset=offset, limit=limit)
+            response = http_session.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
+            if response.status_code != 200:
+                # 回退到无分页版本
+                response = http_session.get(candidates[0], headers=headers, timeout=REQUEST_TIMEOUT)
+                if response.status_code != 200:
+                    break
+
+            data = response.json()
+            items = extract(data)
+            if not items:
+                break
+
+            for item in items:
+                if isinstance(item, dict):
+                    items_all.append(item)
+                    if len(items_all) >= max_items:
+                        break
+
+            offset += len(items)
+            if len(items) < limit:
+                break
+    except Exception as e:
+        log.warning(f"获取成员列表异常: {e}")
+
+    if cache_key:
+        _members_cache[cache_key] = (time(), items_all)
+
+    return items_all[:max_items]
+
+
+def remove_member_by_email(team: dict, email: str) -> tuple[bool, str]:
+    """
+    从 Team 移除指定邮箱对应的成员。
+
+    返回 (success, message)
+    """
+    target = (email or "").strip().lower()
+    if not target:
+        return False, "email 为空"
+
+    members = get_team_members(team, max_items=500)
+    member = None
+    for m in members:
+        e = (
+            (m.get("email") if isinstance(m, dict) else "")
+            or (m.get("user", {}) or {}).get("email") if isinstance(m, dict) else ""
+        )
+        e = (e or "").strip().lower()
+        if e == target:
+            member = m
+            break
+
+    if not member:
+        return False, "未在成员列表中找到该邮箱"
+
+    member_id = (
+        member.get("id")
+        or member.get("member_id")
+        or member.get("memberId")
+        or (member.get("user", {}) or {}).get("id")
+    )
+    if not member_id:
+        return False, "无法解析 member_id"
+
+    headers = build_invite_headers(team)
+
+    # 兼容不同实现：优先 DELETE /members/{id}
+    url = f"https://chatgpt.com/backend-api/accounts/{team['account_id']}/members/{member_id}"
+    try:
+        resp = http_session.delete(url, headers=headers, timeout=REQUEST_TIMEOUT)
+        if resp.status_code in (200, 204):
+            return True, "已移除"
+        # 尝试另一种 payload 接口（若存在）
+        alt = f"https://chatgpt.com/backend-api/accounts/{team['account_id']}/members/remove"
+        resp2 = http_session.post(alt, headers=headers, json={"member_id": member_id, "email": target}, timeout=REQUEST_TIMEOUT)
+        if resp2.status_code in (200, 204):
+            return True, "已移除"
+        return False, f"移除失败: HTTP {resp.status_code} / {resp2.status_code}"
+    except Exception as e:
+        return False, str(e)
 
 def check_available_seats(team: dict) -> int:
     """检查 Team 可用席位数

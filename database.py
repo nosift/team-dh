@@ -117,12 +117,14 @@ class Database:
                     team_name VARCHAR(100) NOT NULL,
                     team_account_id VARCHAR(128),
                     start_at DATETIME NOT NULL,
+                    join_at DATETIME,
                     expires_at DATETIME NOT NULL,
                     status VARCHAR(32) DEFAULT 'active',
                     transfer_count INTEGER DEFAULT 0,
                     attempts INTEGER DEFAULT 0,
                     next_attempt_at DATETIME,
                     last_error TEXT,
+                    last_synced_at DATETIME,
                     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
                 )
             """)
@@ -148,6 +150,14 @@ class Database:
                 )
             """)
 
+            # 兼容旧库：补齐 member_leases 新字段
+            cursor.execute("PRAGMA table_info(member_leases)")
+            lease_cols = {row["name"] for row in cursor.fetchall()}
+            if "join_at" not in lease_cols:
+                cursor.execute("ALTER TABLE member_leases ADD COLUMN join_at DATETIME")
+            if "last_synced_at" not in lease_cols:
+                cursor.execute("ALTER TABLE member_leases ADD COLUMN last_synced_at DATETIME")
+
             # 创建索引
             cursor.execute("""
                 CREATE INDEX IF NOT EXISTS idx_code ON redemption_codes(code)
@@ -161,6 +171,7 @@ class Database:
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_member_leases_expires ON member_leases(expires_at)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_member_leases_next_attempt ON member_leases(next_attempt_at)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_member_events_email ON member_lease_events(email)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_member_leases_status ON member_leases(status)")
 
             log.info("数据库初始化完成", icon="success")
 
@@ -211,19 +222,20 @@ class Database:
         team_account_id: str | None,
         start_at: datetime,
         expires_at: datetime,
+        status: str = "awaiting_join",
     ):
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
                 """
                 INSERT INTO member_leases (email, team_name, team_account_id, start_at, expires_at, status, updated_at)
-                VALUES (?, ?, ?, ?, ?, 'active', CURRENT_TIMESTAMP)
+                VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                 ON CONFLICT(email) DO UPDATE SET
                     team_name = excluded.team_name,
                     team_account_id = excluded.team_account_id,
                     start_at = excluded.start_at,
                     expires_at = excluded.expires_at,
-                    status = 'active',
+                    status = excluded.status,
                     updated_at = CURRENT_TIMESTAMP
             """,
                 (
@@ -232,6 +244,7 @@ class Database:
                     team_account_id,
                     start_at.isoformat(sep=" ", timespec="seconds"),
                     expires_at.isoformat(sep=" ", timespec="seconds"),
+                    status,
                 ),
             )
 
@@ -271,6 +284,63 @@ class Database:
                 (now, now, int(limit)),
             )
             return [dict(row) for row in cursor.fetchall()]
+
+    def list_member_leases_awaiting_join(self, *, limit: int = 50) -> List[Dict[str, Any]]:
+        now = datetime.now().isoformat(sep=" ", timespec="seconds")
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT *
+                FROM member_leases
+                WHERE status = 'awaiting_join'
+                  AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
+                ORDER BY updated_at DESC
+                LIMIT ?
+            """,
+                (now, int(limit)),
+            )
+            return [dict(row) for row in cursor.fetchall()]
+
+    def update_member_lease_joined(
+        self,
+        *,
+        email: str,
+        join_at: datetime,
+        expires_at: datetime,
+        from_team: str | None = None,
+    ):
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                UPDATE member_leases
+                SET join_at = ?,
+                    start_at = ?,
+                    expires_at = ?,
+                    status = 'active',
+                    attempts = 0,
+                    next_attempt_at = NULL,
+                    last_error = NULL,
+                    last_synced_at = CURRENT_TIMESTAMP,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE email = ?
+            """,
+                (
+                    join_at.isoformat(sep=" ", timespec="seconds"),
+                    join_at.isoformat(sep=" ", timespec="seconds"),
+                    expires_at.isoformat(sep=" ", timespec="seconds"),
+                    email,
+                ),
+            )
+
+        self.add_member_lease_event(
+            email=email,
+            action="joined",
+            from_team=from_team,
+            to_team=None,
+            message=f"检测到加入时间：{join_at.isoformat(sep=' ', timespec='seconds')}",
+        )
 
     def get_member_lease(self, email: str) -> Optional[Dict[str, Any]]:
         email = (email or "").strip().lower()

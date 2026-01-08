@@ -121,12 +121,15 @@ class RedemptionService:
                     expires_at = add_months_same_day(now, max(1, min(24, term_months)))
 
                     existed = db.get_member_lease(email) is not None
+                    # 先记录为 awaiting_join；真实到期起点以“用户接受邀请加入 Team 的时间”为准，
+                    # 后台会通过 invites 状态同步 join_at，并据此修正 expires_at。
                     db.upsert_member_lease(
                         email=email,
                         team_name=team_name,
                         team_account_id=team_account_id,
                         start_at=now,
                         expires_at=expires_at,
+                        status="awaiting_join",
                     )
                     if not existed:
                         db.add_member_lease_event(

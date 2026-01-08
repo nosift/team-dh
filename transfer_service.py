@@ -16,7 +16,7 @@ from datetime import datetime, timedelta
 from database import db
 from logger import log
 import config
-from team_service import invite_single_email
+from team_service import invite_single_email, get_invite_status_for_email, remove_member_by_email
 from redemption_service import RedemptionService
 from date_utils import add_months_same_day
 
@@ -89,6 +89,9 @@ def run_transfer_once(*, limit: int = 20) -> int:
 
     moved = 0
     try:
+        # 先同步“实际加入时间”（以 invite accepted 的时间为准）
+        _sync_joined_leases(limit=50)
+
         due = db.list_due_member_leases(limit=limit)
         if not due:
             return 0
@@ -119,9 +122,24 @@ def run_transfer_once(*, limit: int = 20) -> int:
             transferred = False
             last_err = ""
 
+            kick_old = _env_bool("AUTO_TRANSFER_KICK_OLD_TEAM", False)
+            kicked_old = False
+
             for t in candidates:
                 team_name = t.get("name") or ""
                 account_id = t.get("account_id") or ""
+
+                # 强制先移除旧 Team 成员，避免“双占席位”。只做一次，成功后再尝试候选 Team。
+                if kick_old and (not kicked_old) and current_team_name:
+                    old_cfg = config.resolve_team(current_team_name) or {}
+                    if not old_cfg:
+                        last_err = f"旧 Team 配置不存在: {current_team_name}"
+                        break
+                    ok_kick, kick_msg = remove_member_by_email(old_cfg, email)
+                    if not ok_kick:
+                        last_err = f"踢出旧 Team 失败: {kick_msg}"
+                        break
+                    kicked_old = True
 
                 seat_check = RedemptionService._check_team_seats(team_name)
                 if not seat_check.get("available"):
@@ -162,6 +180,56 @@ def run_transfer_once(*, limit: int = 20) -> int:
         return moved
     finally:
         db.release_lock("auto_transfer_monthly", lock_by=lock_by)
+
+
+def _sync_joined_leases(*, limit: int = 50):
+    """
+    将 member_leases 中 awaiting_join 的记录，尽量同步为“已加入”的真实时间。
+    以当前 Team 的 invites 中 accepted/completed 的时间字段为准。
+    """
+    lock_by = uuid.uuid4().hex
+    if not db.acquire_lock("auto_transfer_join_sync", lock_by=lock_by, lock_seconds=60):
+        return
+
+    try:
+        rows = db.list_member_leases_awaiting_join(limit=limit)
+        if not rows:
+            return
+
+        for lease in rows:
+            email = (lease.get("email") or "").strip().lower()
+            team_name = lease.get("team_name")
+            if not email or not team_name:
+                continue
+
+            team_cfg = config.resolve_team(team_name) or {}
+            if not team_cfg:
+                continue
+
+            inv = get_invite_status_for_email(team_cfg, email)
+            if not inv.get("found"):
+                continue
+
+            status = (inv.get("status") or "").strip().lower()
+            if status not in {"accepted", "completed", "done"}:
+                continue
+
+            ts = inv.get("timestamp")
+            join_at = None
+            if isinstance(ts, str) and ts:
+                # 兼容 ISO / 带Z / 带毫秒
+                try:
+                    join_at = datetime.fromisoformat(ts.replace("Z", "+00:00")).replace(tzinfo=None)
+                except Exception:
+                    join_at = None
+            if not join_at:
+                # 兜底：用当前时间近似（不建议，但比永久 awaiting_join 好）
+                join_at = datetime.now()
+
+            expires_at = _expires_at_for_new_term(join_at)
+            db.update_member_lease_joined(email=email, join_at=join_at, expires_at=expires_at, from_team=team_name)
+    finally:
+        db.release_lock("auto_transfer_join_sync", lock_by=lock_by)
 
 
 _worker_started = False
