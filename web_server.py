@@ -35,6 +35,46 @@ ADMIN_PASSWORD = config.get("web.admin_password", "admin123")
 ENABLE_ADMIN = config.get("web.enable_admin", True)
 
 
+_last_config_reload_sig: tuple[float, float, int, int] | None = None
+
+
+def _config_files_signature() -> tuple[float, float, int, int]:
+    cfg_path = config.CONFIG_FILE if config.CONFIG_FILE.exists() else config.FALLBACK_CONFIG_FILE
+    team_path = config.TEAM_JSON_FILE if config.TEAM_JSON_FILE.exists() else config.FALLBACK_TEAM_JSON_FILE
+    try:
+        cfg_stat = cfg_path.stat()
+        cfg_mtime = cfg_stat.st_mtime
+        cfg_size = cfg_stat.st_size
+    except Exception:
+        cfg_mtime = 0.0
+        cfg_size = 0
+    try:
+        team_stat = team_path.stat()
+        team_mtime = team_stat.st_mtime
+        team_size = team_stat.st_size
+    except Exception:
+        team_mtime = 0.0
+        team_size = 0
+    return (cfg_mtime, team_mtime, cfg_size, team_size)
+
+
+@app.before_request
+def _auto_reload_config_if_changed():
+    """
+    多 worker 环境下（gunicorn）Team 变更只会在触发保存的那个 worker 里 reload。
+    这里按文件 mtime 自动 reload，保证所有 worker 最终一致。
+    """
+    global _last_config_reload_sig
+    try:
+        sig = _config_files_signature()
+        if _last_config_reload_sig != sig:
+            config.reload_teams()
+            _last_config_reload_sig = sig
+    except Exception:
+        # 不影响请求主流程
+        pass
+
+
 # ==================== 认证装饰器 ====================
 
 def require_admin(f):
@@ -431,6 +471,69 @@ def admin_delete_code(code):
         return jsonify({"success": False, "error": str(e)}), 500
 
 
+@app.route("/api/admin/codes/bulk-delete", methods=["POST"])
+@require_admin
+def admin_bulk_delete_codes():
+    """批量删除兑换码（默认软删除，支持筛选）"""
+    try:
+        data = request.get_json() or {}
+        confirm = (data.get("confirm") or "").strip()
+        if confirm != "DELETE_ALL":
+            return jsonify({"success": False, "error": "缺少确认字段 confirm=DELETE_ALL"}), 400
+
+        team = (data.get("team") or "").strip()
+        status = (data.get("status") or "").strip() or None
+        include_deleted = bool(data.get("include_deleted", False))
+        hard = bool(data.get("hard", False))
+
+        codes = db.list_codes(team_name=None, status=status, include_deleted=include_deleted)
+
+        if team:
+            target_idx = _team_index_from_any_name(team)
+            if target_idx is not None:
+                codes = [c for c in codes if _team_index_from_any_name(c.get("team_name")) == target_idx]
+            else:
+                codes = [c for c in codes if (c.get("team_name") or "") == team]
+
+        deleted = 0
+        for c in codes:
+            if db.delete_code(c.get("code"), hard=hard):
+                deleted += 1
+
+        return jsonify(
+            {
+                "success": True,
+                "message": f"已删除 {deleted} 个兑换码" + ("（含记录）" if hard else ""),
+                "data": {"deleted": deleted},
+            }
+        )
+    except Exception as e:
+        log.error(f"批量删除兑换码失败: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/admin/redemptions/bulk-delete", methods=["POST"])
+@require_admin
+def admin_bulk_delete_redemptions():
+    """批量删除兑换记录（支持按 team 精确匹配，可留空删除全部）"""
+    try:
+        data = request.get_json() or {}
+        confirm = (data.get("confirm") or "").strip()
+        if confirm != "DELETE_ALL":
+            return jsonify({"success": False, "error": "缺少确认字段 confirm=DELETE_ALL"}), 400
+
+        team = (data.get("team") or "").strip()
+        names = [team] if team else None
+        deleted = db.bulk_delete_redemptions(team_names=names)
+
+        return jsonify(
+            {"success": True, "message": f"已删除 {deleted} 条兑换记录", "data": {"deleted": deleted}}
+        )
+    except Exception as e:
+        log.error(f"批量删除兑换记录失败: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
 # ==================== Team 管理 API ====================
 
 @app.route("/api/admin/teams", methods=["GET"])
@@ -512,10 +615,32 @@ def admin_delete_team(index):
     """删除 Team"""
     try:
         from team_manager import team_manager
+
+        cleanup = request.args.get("cleanup", "true").lower() in {"1", "true", "yes", "y", "on"}
+
+        before = team_manager.get_team_list()
+        if index < 0 or index >= len(before):
+            return jsonify({"success": False, "error": f"Team 索引 {index} 不存在"}), 404
+        team_name = before[index]["name"]
+        fallback_name = f"Team{index+1}"
+
         result = team_manager.delete_team(index)
 
         if result["success"]:
-            return jsonify(result)
+            deleted_codes = 0
+            deleted_stats = 0
+            if cleanup:
+                deleted_codes = db.soft_delete_codes_by_team_names([team_name, fallback_name])
+                deleted_stats = db.delete_team_stats_by_names([team_name, fallback_name])
+
+            return jsonify(
+                {
+                    **result,
+                    "message": (result.get("message") or "删除成功")
+                    + (f"；已清理兑换码 {deleted_codes} 个，统计 {deleted_stats} 行" if cleanup else ""),
+                    "data": {"deleted_codes": deleted_codes, "deleted_team_stats": deleted_stats},
+                }
+            )
         else:
             return jsonify(result), 404
 

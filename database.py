@@ -425,6 +425,35 @@ class Database:
 
             return True
 
+    def soft_delete_codes_by_team_names(self, team_names: List[str]) -> int:
+        """按 team_name 批量软删除兑换码（status=deleted），返回影响行数。"""
+        names = [n for n in (team_names or []) if n]
+        if not names:
+            return 0
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            placeholders = ",".join(["?"] * len(names))
+            cursor.execute(
+                f"""
+                UPDATE redemption_codes
+                SET status = 'deleted'
+                WHERE status != 'deleted' AND team_name IN ({placeholders})
+            """,
+                names,
+            )
+            return cursor.rowcount or 0
+
+    def delete_team_stats_by_names(self, team_names: List[str]) -> int:
+        """按 team_name 批量删除 Team 统计行，返回影响行数。"""
+        names = [n for n in (team_names or []) if n]
+        if not names:
+            return 0
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            placeholders = ",".join(["?"] * len(names))
+            cursor.execute(f"DELETE FROM teams_stats WHERE team_name IN ({placeholders})", names)
+            return cursor.rowcount or 0
+
     # ==================== 兑换记录管理 ====================
 
     def create_redemption(
@@ -514,6 +543,18 @@ class Database:
             )
             return [dict(row) for row in cursor.fetchall()]
 
+    def bulk_delete_redemptions(self, *, team_names: Optional[List[str]] = None) -> int:
+        """批量删除兑换记录，返回删除条数。"""
+        names = [n for n in (team_names or []) if n]
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            if names:
+                placeholders = ",".join(["?"] * len(names))
+                cursor.execute(f"DELETE FROM redemptions WHERE team_name IN ({placeholders})", names)
+            else:
+                cursor.execute("DELETE FROM redemptions")
+            return cursor.rowcount or 0
+
     # ==================== Team统计管理 ====================
 
     def update_team_stats(
@@ -584,7 +625,7 @@ class Database:
             cursor = conn.cursor()
 
             # 总兑换码数
-            cursor.execute("SELECT COUNT(*) as count FROM redemption_codes")
+            cursor.execute("SELECT COUNT(*) as count FROM redemption_codes WHERE status != 'deleted'")
             total_codes = cursor.fetchone()["count"]
 
             # 激活的兑换码数

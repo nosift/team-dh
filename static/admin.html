@@ -329,6 +329,7 @@
                         <option value="expired">过期</option>
                     </select>
                     <button class="refresh-btn" onclick="loadCodes({ force: true })">刷新</button>
+                    <button class="action-btn danger" onclick="bulkDeleteCodes()">全部删除</button>
                 </div>
 
                 <div id="codesTable">
@@ -340,6 +341,7 @@
             <div id="redemptions" class="tab-pane">
                 <div class="filter-bar">
                     <button class="refresh-btn" onclick="loadRedemptions({ force: true })">刷新</button>
+                    <button class="action-btn danger" onclick="bulkDeleteRedemptions()">全部删除</button>
                 </div>
 
                 <div id="redemptionsTable">
@@ -468,7 +470,11 @@
             document.getElementById(tabName).classList.add('active');
 
             // 加载对应数据
-            if (tabName === 'codes') loadCodes();
+            if (tabName === 'codes') {
+                loadTeamFilterOptions({ force: true });
+                loadCodes({ force: true });
+                loadStats({ force: true });
+            }
             else if (tabName === 'redemptions') loadRedemptions();
             else if (tabName === 'teams') loadTeamStats();
             else if (tabName === 'teamManagement') loadTeamList();
@@ -770,6 +776,55 @@
             }
         }
 
+        async function bulkDeleteCodes() {
+            const team = document.getElementById('teamFilter').value;
+            const status = document.getElementById('statusFilter').value;
+
+            const tip = `将删除当前筛选下的全部兑换码：\n\nTeam: ${team || '所有Team'}\n状态: ${status || '所有状态'}\n\n请输入 DELETE_ALL 确认：`;
+            const confirmation = prompt(tip);
+            if (confirmation !== 'DELETE_ALL') return;
+
+            try {
+                const result = await fetchJson('/api/admin/codes/bulk-delete', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ confirm: 'DELETE_ALL', team, status })
+                });
+
+                cacheState.codes.clear();
+                cacheState.stats.ts = 0;
+
+                alert(result.message || '已删除');
+                loadCodes({ force: true });
+                loadStats({ force: true });
+            } catch (error) {
+                alert('全部删除失败: ' + error.message);
+            }
+        }
+
+        async function bulkDeleteRedemptions() {
+            const tip = `将删除全部兑换记录（不可恢复）。\n\n请输入 DELETE_ALL 确认：`;
+            const confirmation = prompt(tip);
+            if (confirmation !== 'DELETE_ALL') return;
+
+            try {
+                const result = await fetchJson('/api/admin/redemptions/bulk-delete', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ confirm: 'DELETE_ALL' })
+                });
+
+                cacheState.redemptions.ts = 0;
+                cacheState.stats.ts = 0;
+
+                alert(result.message || '已删除');
+                loadRedemptions({ force: true });
+                loadStats({ force: true });
+            } catch (error) {
+                alert('全部删除失败: ' + error.message);
+            }
+        }
+
         // 页面加载时初始化
         window.addEventListener('load', function() {
             loadStats();
@@ -953,11 +1008,17 @@
             }
 
             try {
-                const result = await fetchJson(`/api/admin/teams/${index}`, { method: 'DELETE' });
+                const result = await fetchJson(`/api/admin/teams/${index}?cleanup=true`, { method: 'DELETE' });
                 alert(result.message || '删除成功');
                 cacheState.teams.ts = 0;
+                cacheState.codes.clear();
+                cacheState.redemptions.ts = 0;
+                cacheState.stats.ts = 0;
                 loadTeamList({ force: true });
                 loadTeamFilterOptions({ force: true }); // 刷新Team筛选选项
+                loadCodes({ force: true });
+                loadTeamStats({ force: true });
+                loadStats({ force: true });
             } catch (error) {
                 if ((error.message || '').includes('未登录')) {
                     window.location.href = '/admin/login';
@@ -1035,8 +1096,10 @@
                 closeGenerateCodesModal();
                 cacheState.codes.clear();
                 cacheState.stats.ts = 0;
+                cacheState.teams.ts = 0;
                 loadCodes({ force: true });
                 loadStats({ force: true });
+                loadTeamStats({ force: true });
 
             } catch (error) {
                 if ((error.message || '').includes('未登录')) {
