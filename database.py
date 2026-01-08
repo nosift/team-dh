@@ -383,12 +383,14 @@ class Database:
                 SET team_name = ?,
                     team_account_id = ?,
                     start_at = ?,
+                    join_at = NULL,
                     expires_at = ?,
-                    status = 'active',
+                    status = 'awaiting_join',
                     transfer_count = transfer_count + 1,
                     attempts = 0,
                     next_attempt_at = NULL,
                     last_error = NULL,
+                    last_synced_at = NULL,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE email = ?
             """,

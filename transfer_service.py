@@ -167,7 +167,7 @@ def run_transfer_once(*, limit: int = 20) -> int:
                         action="transferred",
                         from_team=current_team_name,
                         to_team=team_name,
-                        message=f"自动转移：已重新发送邀请（到期 {expires_at.date().isoformat()}）",
+                        message="自动转移：已发送新 Team 邀请，等待接受；到期日将以实际加入时间为准自动修正",
                     )
                     log.info(f"自动转移成功: {email} -> {team_name}", icon="success")
                     moved += 1
