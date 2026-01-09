@@ -719,7 +719,7 @@
             el.textContent = message;
             el.style.display = 'block';
             if (type === 'danger') el.style.background = 'rgba(255, 59, 48, 0.92)';
-            else if (type === 'success') el.style.background = 'rgba(52, 199, 89, 0.92)';
+            else if (type === 'success') el.style.background = 'rgba(0, 0, 0, 0.82)';
             else el.style.background = 'rgba(0, 0, 0, 0.82)';
             clearTimeout(showToast._t);
             showToast._t = setTimeout(() => { el.style.display = 'none'; }, timeoutMs);
