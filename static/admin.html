@@ -523,6 +523,7 @@
                         <input id="leaseEmailFilter" class="ui-input" style="width: 280px; max-width: 70vw;" placeholder="输入邮箱筛选事件（可选）" />
                     </div>
                     <div class="filter-right">
+                        <button class="refresh-btn" onclick="openLeaseUpsert()">录入邮箱</button>
                         <button class="refresh-btn" onclick="syncJoinTimes()">同步加入时间</button>
                         <button class="refresh-btn" onclick="runTransferOnce()">执行一次转移</button>
                         <button class="refresh-btn" onclick="loadLeases({ force: true })">刷新</button>
@@ -1232,7 +1233,7 @@
 
             try {
                 const leases = await getLeases({ limit: 200, force: !!options.force });
-                let html = '<table><thead><tr><th>邮箱</th><th>当前Team</th><th>状态</th><th>join_at</th><th>expires_at</th><th>转移次数</th><th>下次重试</th><th>最后错误</th><th>事件</th></tr></thead><tbody>';
+                let html = '<table><thead><tr><th>邮箱</th><th>当前Team</th><th>状态</th><th>join_at</th><th>expires_at</th><th>转移次数</th><th>下次重试</th><th>最后错误</th><th>操作</th></tr></thead><tbody>';
 
                 leases.forEach(l => {
                     const email = escapeHtml(l.email || '-');
@@ -1262,7 +1263,11 @@
                             <td>${count}</td>
                             <td>${nextAt}</td>
                             <td style="max-width: 240px;"><span class="team-cell" title="${err}">${err || '-'}</span></td>
-                            <td><button class="action-btn enable" onclick="loadLeaseEvents(${emailJson})">查看</button></td>
+                            <td style="display:flex; gap:8px; flex-wrap:wrap;">
+                                <button class="action-btn enable" onclick="loadLeaseEvents(${emailJson})">查看</button>
+                                <button class="action-btn disable" onclick="forceExpireLease(${emailJson})">强制到期</button>
+                                <button class="action-btn enable" onclick="runTransferForEmail(${emailJson})">执行转移</button>
+                            </td>
                         </tr>
                     `;
                 });
@@ -1341,6 +1346,101 @@
             } catch (e) {
                 showToast('执行失败: ' + e.message, 'danger', 2600);
             }
+        }
+
+        async function forceExpireLease(email) {
+            const ok = await uiConfirmPhrase({
+                title: '测试操作',
+                message: `将强制该邮箱立即到期（仅用于测试）\\n\\n邮箱: ${email}`,
+                phrase: UI_CONFIRM_PHRASE
+            });
+            if (!ok) return;
+
+            try {
+                const res = await fetchJson('/api/admin/leases/force-expire', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email })
+                });
+                showToast(res.message || '已强制到期', 'success', 2000);
+                cacheState.leases.ts = 0;
+                loadLeases({ force: true });
+            } catch (e) {
+                showToast('强制到期失败: ' + e.message, 'danger', 2600);
+            }
+        }
+
+        async function runTransferForEmail(email) {
+            const ok = await uiConfirm(`将对该邮箱执行一次“到期转移”（仅在到期时会真正转移）。\\n\\n邮箱: ${email}`, { title: '执行转移' });
+            if (!ok) return;
+            try {
+                const res = await fetchJson('/api/admin/leases/run-transfer-once', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email })
+                });
+                showToast(res.message || '执行完成', 'success', 2200);
+                cacheState.leases.ts = 0;
+                cacheState.leaseEvents.clear();
+                loadLeases({ force: true });
+            } catch (e) {
+                showToast('执行失败: ' + e.message, 'danger', 2600);
+            }
+        }
+
+        async function openLeaseUpsert() {
+            const teams = await getTeams({ force: true });
+            const options = teams.map(t => `<option value="${escapeHtml(t.name)}">${escapeHtml(t.name)}</option>`).join('');
+
+            const bodyHtml = `
+                <div style="display:flex; flex-direction:column; gap:10px;">
+                    <div style="font-size:13px; color:#86868b; line-height:1.5;">
+                        录入后该邮箱会纳入“到期转移”体系。若不填 join_at，将先进入 awaiting_join，之后用“同步加入时间”自动补 join_at。
+                    </div>
+                    <div>
+                        <div style="margin-bottom:6px; font-weight:500;">邮箱</div>
+                        <input id="leaseUpsertEmail" class="ui-input" placeholder="user@example.com" />
+                    </div>
+                    <div>
+                        <div style="margin-bottom:6px; font-weight:500;">当前 Team</div>
+                        <select id="leaseUpsertTeam" class="ui-input">${options}</select>
+                    </div>
+                    <div>
+                        <div style="margin-bottom:6px; font-weight:500;">join_at（可选，ISO 格式）</div>
+                        <input id="leaseUpsertJoinAt" class="ui-input" placeholder="2026-01-07T12:00:00" />
+                    </div>
+                </div>
+            `;
+
+            const cancel = makeButton({ text: '取消', className: 'action-btn disable', onClick: () => closeModal() });
+            const ok = makeButton({
+                text: '保存',
+                className: 'refresh-btn',
+                onClick: async () => {
+                    const email = (document.getElementById('leaseUpsertEmail').value || '').trim().toLowerCase();
+                    const team_name = (document.getElementById('leaseUpsertTeam').value || '').trim();
+                    const join_at = (document.getElementById('leaseUpsertJoinAt').value || '').trim();
+                    if (!email || !team_name) {
+                        showToast('请填写邮箱和 Team', 'danger', 2200);
+                        return;
+                    }
+                    try {
+                        const res = await fetchJson('/api/admin/leases', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ email, team_name, join_at })
+                        });
+                        closeModal();
+                        showToast(res.message || '已录入', 'success', 2000);
+                        cacheState.leases.ts = 0;
+                        loadLeases({ force: true });
+                    } catch (e) {
+                        showToast('录入失败: ' + e.message, 'danger', 2600);
+                    }
+                }
+            });
+
+            openModal({ title: '录入邮箱到期租约', bodyHtml, actions: [cancel, ok] });
         }
 
         async function bulkDeleteRedemptions() {

@@ -14,7 +14,7 @@ from logger import log
 import config
 import ipaddress
 from transfer_service import start_transfer_worker
-from transfer_service import run_transfer_once, sync_joined_leases_once
+from transfer_service import run_transfer_once, sync_joined_leases_once, run_transfer_for_email
 
 
 app = Flask(__name__)
@@ -469,6 +469,46 @@ def admin_list_member_leases():
         return jsonify({"success": False, "error": str(e)}), 500
 
 
+@app.route("/api/admin/leases", methods=["POST"])
+@require_admin
+def admin_upsert_member_lease():
+    """手动录入/修正租约：用于将某邮箱纳入到期转移体系。"""
+    try:
+        payload = request.get_json(silent=True) or {}
+        email = (payload.get("email") or "").strip().lower()
+        team_name = (payload.get("team_name") or "").strip()
+        join_at_raw = (payload.get("join_at") or "").strip()
+
+        if not email or not team_name:
+            return jsonify({"success": False, "error": "email/team_name 不能为空"}), 400
+
+        team_cfg = config.resolve_team(team_name) or {}
+        team_account_id = team_cfg.get("account_id")
+
+        join_at = None
+        expires_at = None
+        if join_at_raw:
+            try:
+                join_at = datetime.fromisoformat(join_at_raw.replace("Z", "+00:00")).replace(tzinfo=None)
+            except Exception:
+                return jsonify({"success": False, "error": "join_at 需要 ISO 格式，例如 2026-01-07T12:00:00"}), 400
+            from date_utils import add_months_same_day
+            expires_at = add_months_same_day(join_at, 1)
+
+        db.upsert_member_lease_manual(
+            email=email,
+            team_name=team_name,
+            team_account_id=team_account_id,
+            join_at=join_at,
+            expires_at=expires_at,
+        )
+        db.add_member_lease_event(email=email, action="manual_upsert", from_team=None, to_team=team_name, message="管理员手动录入/更新")
+        return jsonify({"success": True, "message": "已录入"})
+    except Exception as e:
+        log.error(f"录入租约失败: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
 @app.route("/api/admin/leases/events")
 @require_admin
 def admin_list_member_lease_events():
@@ -505,10 +545,31 @@ def admin_run_transfer_once():
     try:
         payload = request.get_json(silent=True) or {}
         limit = int(payload.get("limit", 20))
+        email = (payload.get("email") or "").strip().lower()
+        if email:
+            result = run_transfer_for_email(email)
+            return jsonify({"success": True, "message": result.get("message", ""), "data": {"moved": result.get("moved", 0)}})
         moved = run_transfer_once(limit=limit)
         return jsonify({"success": True, "message": f"本轮转移完成: {moved} 人", "data": {"moved": moved}})
     except Exception as e:
         log.error(f"执行转移失败: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/admin/leases/force-expire", methods=["POST"])
+@require_admin
+def admin_force_expire_lease():
+    """测试用：将指定邮箱租约标记为立即到期。"""
+    try:
+        payload = request.get_json(silent=True) or {}
+        email = (payload.get("email") or "").strip().lower()
+        if not email:
+            return jsonify({"success": False, "error": "email 不能为空"}), 400
+        db.force_expire_member_lease(email=email)
+        db.add_member_lease_event(email=email, action="force_expire", from_team=None, to_team=None, message="管理员强制到期（测试）")
+        return jsonify({"success": True, "message": "已强制到期"})
+    except Exception as e:
+        log.error(f"强制到期失败: {e}")
         return jsonify({"success": False, "error": str(e)}), 500
 
 

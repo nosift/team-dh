@@ -465,6 +465,86 @@ class Database:
                 )
             return [dict(row) for row in cursor.fetchall()]
 
+    def upsert_member_lease_manual(
+        self,
+        *,
+        email: str,
+        team_name: str,
+        team_account_id: str | None,
+        join_at: datetime | None,
+        expires_at: datetime | None,
+    ):
+        """
+        管理后台手动录入/修正租约。
+        - join_at 为空：标记为 awaiting_join，等待后台同步 join_at
+        - join_at 非空：直接进入 active（并计算/使用 expires_at）
+        """
+        email = (email or "").strip().lower()
+        team_name = (team_name or "").strip()
+        if not email or not team_name:
+            raise ValueError("email/team_name 不能为空")
+
+        if join_at and not expires_at:
+            raise ValueError("join_at 不为空时必须提供 expires_at")
+
+        status = "active" if join_at else "awaiting_join"
+        start_at = join_at or datetime.now()
+        exp = expires_at or (datetime.now() + timedelta(days=30))
+
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO member_leases (email, team_name, team_account_id, start_at, join_at, expires_at, status, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(email) DO UPDATE SET
+                    team_name = excluded.team_name,
+                    team_account_id = excluded.team_account_id,
+                    start_at = excluded.start_at,
+                    join_at = excluded.join_at,
+                    expires_at = excluded.expires_at,
+                    status = excluded.status,
+                    attempts = 0,
+                    next_attempt_at = NULL,
+                    last_error = NULL,
+                    updated_at = CURRENT_TIMESTAMP
+            """,
+                (
+                    email,
+                    team_name,
+                    team_account_id,
+                    start_at.isoformat(sep=" ", timespec="seconds"),
+                    (join_at.isoformat(sep=" ", timespec="seconds") if join_at else None),
+                    exp.isoformat(sep=" ", timespec="seconds"),
+                    status,
+                ),
+            )
+
+    def force_expire_member_lease(self, *, email: str):
+        """测试用：将租约标记为立即到期（使其进入到期转移队列）。"""
+        email = (email or "").strip().lower()
+        if not email:
+            raise ValueError("email 不能为空")
+        now = datetime.now().isoformat(sep=" ", timespec="seconds")
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                UPDATE member_leases
+                SET expires_at = ?,
+                    status = CASE
+                        WHEN status = 'awaiting_join' THEN status
+                        ELSE 'active'
+                    END,
+                    next_attempt_at = NULL,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE email = ?
+            """,
+                (now, email),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("租约不存在")
+
     def _ensure_code_lock_columns(self):
         with self.get_connection() as conn:
             cursor = conn.cursor()
