@@ -328,16 +328,31 @@ def get_all_invites_debug(team: dict, *, max_items: int = 500) -> tuple[list, st
 
     try:
         while len(items_all) < max_items:
-            url = (
-                f"https://chatgpt.com/backend-api/accounts/{team['account_id']}/invites"
-                f"?offset={offset}&limit={limit}&query="
-            )
-            response = http_session.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
-            if response.status_code != 200:
-                last_err = f"HTTP {response.status_code}: {response.text[:200]}"
+            url_candidates = [
+                f"https://chatgpt.com/backend-api/accounts/{team['account_id']}/invites?offset={offset}&limit={limit}&query=",
+                f"https://chatgpt.com/backend-api/accounts/{team['account_id']}/invites?offset={offset}&limit={limit}",
+                f"https://chatgpt.com/backend-api/accounts/{team['account_id']}/invites?offset={offset}&limit={limit}&status=all",
+                f"https://chatgpt.com/backend-api/accounts/{team['account_id']}/invites?offset={offset}&limit={limit}&include_processed=true",
+            ]
+
+            items = []
+            ok_resp = None
+            for url in url_candidates:
+                response = http_session.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
+                if response.status_code != 200:
+                    last_err = f"invites {url} -> HTTP {response.status_code}: {response.text[:160]}"
+                    continue
+                ok_resp = response
+                try:
+                    data = response.json()
+                except Exception:
+                    last_err = f"invites {url} -> JSON 解析失败"
+                    continue
+                items = _extract_invite_items(data)
                 break
-            data = response.json()
-            items = _extract_invite_items(data)
+
+            if not ok_resp:
+                break
             if not items:
                 break
             items_all.extend([i for i in items if isinstance(i, dict)])
@@ -420,8 +435,12 @@ def get_team_members_debug(team: dict, *, max_items: int = 500) -> tuple[list, s
     last_err: str | None = None
 
     candidates = [
-        f"https://chatgpt.com/backend-api/accounts/{team['account_id']}/members",
         f"https://chatgpt.com/backend-api/accounts/{team['account_id']}/members?offset={{offset}}&limit={{limit}}",
+        f"https://chatgpt.com/backend-api/accounts/{team['account_id']}/members",
+        f"https://chatgpt.com/backend-api/accounts/{team['account_id']}/account_users?offset={{offset}}&limit={{limit}}",
+        f"https://chatgpt.com/backend-api/accounts/{team['account_id']}/account_users",
+        f"https://chatgpt.com/backend-api/accounts/{team['account_id']}/users?offset={{offset}}&limit={{limit}}",
+        f"https://chatgpt.com/backend-api/accounts/{team['account_id']}/users",
     ]
 
     def extract(payload) -> list:
@@ -438,17 +457,26 @@ def get_team_members_debug(team: dict, *, max_items: int = 500) -> tuple[list, s
 
     try:
         while len(items_all) < max_items:
-            url = candidates[1].format(offset=offset, limit=limit)
-            response = http_session.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
-            if response.status_code != 200:
-                # 回退到无分页版本
-                response = http_session.get(candidates[0], headers=headers, timeout=REQUEST_TIMEOUT)
-                if response.status_code != 200:
-                    last_err = f"HTTP {response.status_code}: {response.text[:200]}"
-                    break
+            response = None
+            items = []
 
-            data = response.json()
-            items = extract(data)
+            for tmpl in candidates:
+                url = tmpl.format(offset=offset, limit=limit)
+                resp = http_session.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
+                if resp.status_code != 200:
+                    last_err = f"members {url} -> HTTP {resp.status_code}: {resp.text[:160]}"
+                    continue
+                try:
+                    data = resp.json()
+                except Exception:
+                    last_err = f"members {url} -> JSON 解析失败"
+                    continue
+                items = extract(data)
+                response = resp
+                break
+
+            if response is None:
+                break
             if not items:
                 break
 
