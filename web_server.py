@@ -542,11 +542,13 @@ def admin_sync_joined_leases():
         payload = request.get_json(silent=True) or {}
         limit = int(payload.get("limit", 50))
         result = sync_joined_leases_once_detailed(limit=limit)
-        return jsonify({
-            "success": True,
-            "message": f"已同步 {result['synced']} 条（检查 {result['checked']} 条）",
-            "data": result
-        })
+        msg = (
+            f"已同步 {result.get('synced', 0)} 条（检查 {result.get('checked', 0)} 条）"
+            + (f"，成员无时间 {result.get('member_no_time', 0)} 条" if result.get("member_no_time") else "")
+            + (f"，members 错误 {result.get('member_errors', 0)} 条" if result.get("member_errors") else "")
+            + (f"，invites 错误 {result.get('invite_errors', 0)} 条" if result.get("invite_errors") else "")
+        )
+        return jsonify({"success": True, "message": msg, "data": result})
     except Exception as e:
         log.error(f"同步加入时间失败: {e}")
         return jsonify({"success": False, "error": str(e)}), 500

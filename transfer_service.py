@@ -115,15 +115,31 @@ def _sync_joined_leases(*, limit: int = 50):
 
     checked = 0
     synced = 0
+    invite_errors = 0
+    invite_not_accepted = 0
+    member_errors = 0
+    member_no_time = 0
+    not_joined = 0
+    skipped = 0
     try:
         rows = db.list_member_leases_awaiting_join(limit=limit)
         if not rows:
-            return 0, 0
+            return {
+                "checked": 0,
+                "synced": 0,
+                "invite_errors": 0,
+                "invite_not_accepted": 0,
+                "member_errors": 0,
+                "member_no_time": 0,
+                "not_joined": 0,
+                "skipped": 0,
+            }
 
         for lease in rows:
             email = (lease.get("email") or "").strip().lower()
             team_name = lease.get("team_name")
             if not email or not team_name:
+                skipped += 1
                 continue
             checked += 1
 
@@ -136,6 +152,7 @@ def _sync_joined_leases(*, limit: int = 50):
                     to_team=None,
                     message="Team 配置不存在，无法同步 join_at",
                 )
+                skipped += 1
                 continue
 
             try:
@@ -155,6 +172,7 @@ def _sync_joined_leases(*, limit: int = 50):
                         except Exception:
                             join_at = None
                 else:
+                    invite_not_accepted += 1
                     db.add_member_lease_event(
                         email=email,
                         action="sync_invite_status",
@@ -163,6 +181,7 @@ def _sync_joined_leases(*, limit: int = 50):
                         message=f"invites 状态={status or 'unknown'}，未达到 accepted/completed",
                     )
             elif inv.get("error"):
+                invite_errors += 1
                 db.add_member_lease_event(
                     email=email,
                     action="sync_invite_error",
@@ -197,6 +216,7 @@ def _sync_joined_leases(*, limit: int = 50):
                                 message="成员列表未提供加入时间字段，已使用当前时间近似 join_at（AUTO_TRANSFER_ALLOW_APPROX_JOIN_AT=true）",
                             )
                         else:
+                            member_no_time += 1
                             db.add_member_lease_event(
                                 email=email,
                                 action="sync_member_no_time",
@@ -206,6 +226,7 @@ def _sync_joined_leases(*, limit: int = 50):
                             )
                             continue
                 elif mi.get("error"):
+                    member_errors += 1
                     db.add_member_lease_event(
                         email=email,
                         action="sync_member_error",
@@ -215,6 +236,7 @@ def _sync_joined_leases(*, limit: int = 50):
                     )
 
             if not join_at:
+                not_joined += 1
                 db.add_member_lease_event(
                     email=email,
                     action="sync_not_joined",
@@ -227,7 +249,16 @@ def _sync_joined_leases(*, limit: int = 50):
             expires_at = _expires_at_for_new_term(join_at)
             db.update_member_lease_joined(email=email, join_at=join_at, expires_at=expires_at, from_team=team_name)
             synced += 1
-        return checked, synced
+        return {
+            "checked": checked,
+            "synced": synced,
+            "invite_errors": invite_errors,
+            "invite_not_accepted": invite_not_accepted,
+            "member_errors": member_errors,
+            "member_no_time": member_no_time,
+            "not_joined": not_joined,
+            "skipped": skipped,
+        }
     finally:
         db.release_lock("auto_transfer_join_sync", lock_by=lock_by)
 
@@ -237,13 +268,13 @@ def sync_joined_leases_once(*, limit: int = 50) -> int:
     管理后台手动触发：同步 awaiting_join 的 join_at。
     返回本次成功同步的条数（粗略统计）。
     """
-    _, synced = _sync_joined_leases(limit=limit)
-    return int(synced or 0)
+    result = _sync_joined_leases(limit=limit)
+    return int((result or {}).get("synced") or 0)
 
 
 def sync_joined_leases_once_detailed(*, limit: int = 50) -> dict:
-    checked, synced = _sync_joined_leases(limit=limit)
-    return {"checked": int(checked or 0), "synced": int(synced or 0)}
+    result = _sync_joined_leases(limit=limit)
+    return {k: int(v or 0) for k, v in (result or {}).items()}
 
 
 def run_transfer_for_email(email: str) -> dict:
