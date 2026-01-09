@@ -14,7 +14,7 @@ from logger import log
 import config
 import ipaddress
 from transfer_service import start_transfer_worker
-from transfer_service import run_transfer_once, sync_joined_leases_once, run_transfer_for_email
+from transfer_service import run_transfer_once, sync_joined_leases_once, sync_joined_leases_once_detailed, run_transfer_for_email
 
 
 app = Flask(__name__)
@@ -541,8 +541,12 @@ def admin_sync_joined_leases():
     try:
         payload = request.get_json(silent=True) or {}
         limit = int(payload.get("limit", 50))
-        synced = sync_joined_leases_once(limit=limit)
-        return jsonify({"success": True, "message": f"已同步 {synced} 条", "data": {"synced": synced}})
+        result = sync_joined_leases_once_detailed(limit=limit)
+        return jsonify({
+            "success": True,
+            "message": f"已同步 {result['synced']} 条（检查 {result['checked']} 条）",
+            "data": result
+        })
     except Exception as e:
         log.error(f"同步加入时间失败: {e}")
         return jsonify({"success": False, "error": str(e)}), 500

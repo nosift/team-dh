@@ -62,6 +62,7 @@ AUTO_TRANSFER_ENABLED=true
 AUTO_TRANSFER_POLL_SECONDS=300
 AUTO_TRANSFER_TERM_MONTHS=1
 AUTO_TRANSFER_AUTO_LEAVE_OLD_TEAM=true
+AUTO_TRANSFER_ALLOW_APPROX_JOIN_AT=false
 
 TZ=Asia/Shanghai
 SECRET_KEY=<固定值，必须设置>
@@ -70,6 +71,9 @@ SECRET_KEY=<固定值，必须设置>
 注意：
 - Zeabur Raw Variables 必须使用 `KEY=value`，不要写 `KEY = value`（有空格会导致不生效）
 - `SECRET_KEY` 必须固定（多 worker / 重启否则 session 和行为会乱）
+- `AUTO_TRANSFER_ALLOW_APPROX_JOIN_AT`：默认 `false`。当系统只能确认“邮箱已在成员列表里”，但接口不提供加入时间字段时：
+  - `false`：不写入 join_at（保持 awaiting_join），避免产生不准确的到期时间
+  - `true`：用当前时间近似 join_at（会在事件里标注 joined_fallback）
 
 ---
 
@@ -98,6 +102,7 @@ SECRET_KEY=<固定值，必须设置>
 ### 6.1 同步 join_at（确保到期起点正确）
 1) 打开后台 → 「到期转移」
 2) 点 `同步加入时间`
+   - Toast 会显示：`已同步 X 条（检查 Y 条）`
 3) 找到目标邮箱：
    - 若用户已经接受邀请：`join_at` 应出现，`status` 变为 `active`
    - 若未接受邀请：仍为 `awaiting_join`（此时不应进行到期转移）
@@ -119,6 +124,8 @@ SECRET_KEY=<固定值，必须设置>
 1) 点该邮箱行 `查看`
 2) 看事件表：
    - `joined`：已同步 join_at
+   - `sync_invite_error / sync_member_error`：拉取 invites/members 失败（通常是接口/权限问题）
+   - `sync_not_joined`：未找到已加入证据（可能未接受邀请，或接口未返回）
    - `left_old_team`：已退出旧 Team（自动退生效）
    - `transferred`：已发送新 Team 邀请
    - `transfer_failed`：失败原因（用于排障）

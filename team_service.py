@@ -311,19 +311,20 @@ def get_pending_invites(team: dict, *, max_items: int = 500) -> list:
     return pending
 
 
-def get_all_invites(team: dict, *, max_items: int = 500) -> list:
-    """获取 Team 的邀请列表（包含已接受/已结束）。"""
+def get_all_invites_debug(team: dict, *, max_items: int = 500) -> tuple[list, str | None]:
+    """获取 Team 的邀请列表（包含已接受/已结束），并返回可读错误信息（如有）。"""
     cache_key = team.get("account_id") or team.get("name") or ""
     if cache_key:
         cached = _invites_cache.get(cache_key)
         if cached and (time() - cached[0]) < _CACHE_TTL_SECONDS:
-            return cached[1]
+            return cached[1], None
 
     headers = build_invite_headers(team)
 
     items_all: list = []
     offset = 0
     limit = 100
+    last_err: str | None = None
 
     try:
         while len(items_all) < max_items:
@@ -333,6 +334,7 @@ def get_all_invites(team: dict, *, max_items: int = 500) -> list:
             )
             response = http_session.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
             if response.status_code != 200:
+                last_err = f"HTTP {response.status_code}: {response.text[:200]}"
                 break
             data = response.json()
             items = _extract_invite_items(data)
@@ -344,12 +346,18 @@ def get_all_invites(team: dict, *, max_items: int = 500) -> list:
             if len(items) < limit:
                 break
     except Exception as e:
+        last_err = str(e)
         log.warning(f"获取邀请列表异常: {e}")
 
     if cache_key:
         _invites_cache[cache_key] = (time(), items_all)
 
-    return items_all[:max_items]
+    return items_all[:max_items], last_err
+
+
+def get_all_invites(team: dict, *, max_items: int = 500) -> list:
+    items, _ = get_all_invites_debug(team, max_items=max_items)
+    return items
 
 
 def get_invite_status_for_email(team: dict, email: str) -> dict:
@@ -363,7 +371,10 @@ def get_invite_status_for_email(team: dict, email: str) -> dict:
     if not target:
         return {"found": False}
 
-    items = get_all_invites(team, max_items=500)
+    items, err = get_all_invites_debug(team, max_items=500)
+    if err and not items:
+        return {"found": False, "error": err}
+
     for inv in items:
         e = (inv.get("email_address") or inv.get("email") or inv.get("emailAddress") or "").strip().lower()
         if e != target:
@@ -390,7 +401,7 @@ def get_invite_status_for_email(team: dict, email: str) -> dict:
     return {"found": False}
 
 
-def get_team_members(team: dict, *, max_items: int = 500) -> list:
+def get_team_members_debug(team: dict, *, max_items: int = 500) -> tuple[list, str | None]:
     """
     获取 Team 成员列表（用于按邮箱踢出旧 Team）。
 
@@ -400,12 +411,13 @@ def get_team_members(team: dict, *, max_items: int = 500) -> list:
     if cache_key:
         cached = _members_cache.get(cache_key)
         if cached and (time() - cached[0]) < _CACHE_TTL_SECONDS:
-            return cached[1]
+            return cached[1], None
 
     headers = build_invite_headers(team)
     items_all: list = []
     offset = 0
     limit = 100
+    last_err: str | None = None
 
     candidates = [
         f"https://chatgpt.com/backend-api/accounts/{team['account_id']}/members",
@@ -432,6 +444,7 @@ def get_team_members(team: dict, *, max_items: int = 500) -> list:
                 # 回退到无分页版本
                 response = http_session.get(candidates[0], headers=headers, timeout=REQUEST_TIMEOUT)
                 if response.status_code != 200:
+                    last_err = f"HTTP {response.status_code}: {response.text[:200]}"
                     break
 
             data = response.json()
@@ -449,12 +462,18 @@ def get_team_members(team: dict, *, max_items: int = 500) -> list:
             if len(items) < limit:
                 break
     except Exception as e:
+        last_err = str(e)
         log.warning(f"获取成员列表异常: {e}")
 
     if cache_key:
         _members_cache[cache_key] = (time(), items_all)
 
-    return items_all[:max_items]
+    return items_all[:max_items], last_err
+
+
+def get_team_members(team: dict, *, max_items: int = 500) -> list:
+    items, _ = get_team_members_debug(team, max_items=max_items)
+    return items
 
 
 def get_member_info_for_email(team: dict, email: str) -> dict:
@@ -468,7 +487,10 @@ def get_member_info_for_email(team: dict, email: str) -> dict:
     if not target:
         return {"found": False}
 
-    members = get_team_members(team, max_items=500)
+    members, err = get_team_members_debug(team, max_items=500)
+    if err and not members:
+        return {"found": False, "error": err}
+
     for m in members:
         if not isinstance(m, dict):
             continue
