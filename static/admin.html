@@ -1240,11 +1240,12 @@
                     const team = escapeHtml(l.team_name || '-');
                     const status = escapeHtml(l.status || '-');
                     const joinAt = l.join_at ? new Date(l.join_at).toLocaleString() : '-';
-                    const expAt = l.expires_at ? new Date(l.expires_at).toLocaleString() : '-';
+                    const expAt = (l.status === 'awaiting_join') ? '待同步' : (l.expires_at ? new Date(l.expires_at).toLocaleString() : '-');
                     const nextAt = l.next_attempt_at ? new Date(l.next_attempt_at).toLocaleString() : '-';
                     const err = escapeHtml(l.last_error || '');
                     const count = Number(l.transfer_count ?? 0);
-                    const emailJson = JSON.stringify((l.email || '').toLowerCase());
+                    const rawEmail = (l.email || '').toLowerCase();
+                    const safeEmailAttr = escapeHtml(rawEmail);
 
                     const badgeClass =
                         status === 'active' ? 'success' :
@@ -1264,9 +1265,9 @@
                             <td>${nextAt}</td>
                             <td style="max-width: 240px;"><span class="team-cell" title="${err}">${err || '-'}</span></td>
                             <td style="display:flex; gap:8px; flex-wrap:wrap;">
-                                <button class="action-btn enable" onclick="loadLeaseEvents(${emailJson})">查看</button>
-                                <button class="action-btn disable" onclick="forceExpireLease(${emailJson})">强制到期</button>
-                                <button class="action-btn enable" onclick="runTransferForEmail(${emailJson})">执行转移</button>
+                                <button class="action-btn enable" data-action="lease-view" data-email="${safeEmailAttr}">查看</button>
+                                <button class="action-btn disable" data-action="lease-expire" data-email="${safeEmailAttr}">强制到期</button>
+                                <button class="action-btn enable" data-action="lease-transfer" data-email="${safeEmailAttr}">执行转移</button>
                             </td>
                         </tr>
                     `;
@@ -1310,6 +1311,19 @@
             }
         }
 
+        // 租约页按钮事件代理（避免 inline onclick 的引号问题）
+        document.addEventListener('click', (e) => {
+            const btn = e.target && e.target.closest ? e.target.closest('button[data-action]') : null;
+            if (!btn) return;
+            const action = btn.getAttribute('data-action');
+            const email = (btn.getAttribute('data-email') || '').trim().toLowerCase();
+            if (!action || !email) return;
+
+            if (action === 'lease-view') loadLeaseEvents(email);
+            else if (action === 'lease-expire') forceExpireLease(email);
+            else if (action === 'lease-transfer') runTransferForEmail(email);
+        }, true);
+
         async function syncJoinTimes() {
             const ok = await uiConfirm('将同步 awaiting_join 的 join_at（以邀请 accepted/completed 时间为准）。\n\n继续？', { title: '同步加入时间' });
             if (!ok) return;
@@ -1330,14 +1344,19 @@
         }
 
         async function runTransferOnce() {
-            const ok = await uiConfirm('将执行一轮到期转移（可能会触发自动退出旧 Team + 发送新 Team 邀请）。\n\n继续？', { title: '执行转移' });
+            const email = (document.getElementById('leaseEmailFilter')?.value || '').trim().toLowerCase();
+            const msg = email
+                ? `将对该邮箱执行一次到期转移（仅到期才会真正转移）。\n\n邮箱: ${email}\n\n继续？`
+                : '将执行一轮到期转移（可能会触发自动退出旧 Team + 发送新 Team 邀请）。\n\n继续？';
+
+            const ok = await uiConfirm(msg, { title: '执行转移' });
             if (!ok) return;
 
             try {
                 const res = await fetchJson('/api/admin/leases/run-transfer-once', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ limit: 20 })
+                    body: JSON.stringify(email ? { email } : { limit: 20 })
                 });
                 showToast(res.message || '执行完成', 'success', 2200);
                 cacheState.leases.ts = 0;

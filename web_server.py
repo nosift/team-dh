@@ -463,6 +463,12 @@ def admin_list_member_leases():
         limit = int(request.args.get("limit", 100))
         offset = int(request.args.get("offset", 0))
         rows = db.list_member_leases(limit=limit, offset=offset)
+        # 统一把 DATETIME 字符串转成 ISO 形式（避免前端 Date 解析在不同浏览器不一致）
+        for r in rows:
+            for k in ("start_at", "join_at", "expires_at", "next_attempt_at", "last_synced_at", "updated_at"):
+                v = r.get(k)
+                if isinstance(v, str) and " " in v and "T" not in v:
+                    r[k] = v.replace(" ", "T", 1)
         return jsonify({"success": True, "data": rows})
     except Exception as e:
         log.error(f"获取成员租约失败: {e}")
@@ -518,6 +524,10 @@ def admin_list_member_lease_events():
         limit = int(request.args.get("limit", 200))
         offset = int(request.args.get("offset", 0))
         rows = db.list_member_lease_events(email=email, limit=limit, offset=offset)
+        for r in rows:
+            v = r.get("created_at")
+            if isinstance(v, str) and " " in v and "T" not in v:
+                r["created_at"] = v.replace(" ", "T", 1)
         return jsonify({"success": True, "data": rows})
     except Exception as e:
         log.error(f"获取租约事件失败: {e}")
