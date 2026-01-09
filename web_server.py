@@ -14,6 +14,7 @@ from logger import log
 import config
 import ipaddress
 from transfer_service import start_transfer_worker
+from transfer_service import run_transfer_once, sync_joined_leases_once
 
 
 app = Flask(__name__)
@@ -451,6 +452,63 @@ def admin_delete_redemption(redemption_id: int):
         return jsonify({"success": True, "message": "删除成功"})
     except Exception as e:
         log.error(f"删除兑换记录失败: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/admin/leases")
+@require_admin
+def admin_list_member_leases():
+    """列出成员租约（到期/转移状态）"""
+    try:
+        limit = int(request.args.get("limit", 100))
+        offset = int(request.args.get("offset", 0))
+        rows = db.list_member_leases(limit=limit, offset=offset)
+        return jsonify({"success": True, "data": rows})
+    except Exception as e:
+        log.error(f"获取成员租约失败: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/admin/leases/events")
+@require_admin
+def admin_list_member_lease_events():
+    """列出租约事件"""
+    try:
+        email = request.args.get("email")
+        limit = int(request.args.get("limit", 200))
+        offset = int(request.args.get("offset", 0))
+        rows = db.list_member_lease_events(email=email, limit=limit, offset=offset)
+        return jsonify({"success": True, "data": rows})
+    except Exception as e:
+        log.error(f"获取租约事件失败: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/admin/leases/sync-join", methods=["POST"])
+@require_admin
+def admin_sync_joined_leases():
+    """手动触发：同步 awaiting_join 的 join_at"""
+    try:
+        payload = request.get_json(silent=True) or {}
+        limit = int(payload.get("limit", 50))
+        synced = sync_joined_leases_once(limit=limit)
+        return jsonify({"success": True, "message": f"已同步 {synced} 条", "data": {"synced": synced}})
+    except Exception as e:
+        log.error(f"同步加入时间失败: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/admin/leases/run-transfer-once", methods=["POST"])
+@require_admin
+def admin_run_transfer_once():
+    """手动触发：执行一轮到期转移"""
+    try:
+        payload = request.get_json(silent=True) or {}
+        limit = int(payload.get("limit", 20))
+        moved = run_transfer_once(limit=limit)
+        return jsonify({"success": True, "message": f"本轮转移完成: {moved} 人", "data": {"moved": moved}})
+    except Exception as e:
+        log.error(f"执行转移失败: {e}")
         return jsonify({"success": False, "error": str(e)}), 500
 
 

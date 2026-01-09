@@ -439,6 +439,7 @@
             <button class="tab-btn" onclick="switchTab(event, 'redemptions')">兑换记录</button>
             <button class="tab-btn" onclick="switchTab(event, 'teams')">Team统计</button>
             <button class="tab-btn" onclick="switchTab(event, 'teamManagement')">Team管理</button>
+            <button class="tab-btn" onclick="switchTab(event, 'leases')">到期转移</button>
         </div>
 
         <div class="tab-content">
@@ -511,6 +512,32 @@
 
                 <div id="teamListTable">
                     <div class="loading">加载中...</div>
+                </div>
+            </div>
+
+            <!-- 到期转移 / 成员租约 -->
+            <div id="leases" class="tab-pane">
+                <div class="filter-bar">
+                    <div class="filter-left">
+                        <span class="filter-label">邮箱</span>
+                        <input id="leaseEmailFilter" class="ui-input" style="width: 280px; max-width: 70vw;" placeholder="输入邮箱筛选事件（可选）" />
+                    </div>
+                    <div class="filter-right">
+                        <button class="refresh-btn" onclick="syncJoinTimes()">同步加入时间</button>
+                        <button class="refresh-btn" onclick="runTransferOnce()">执行一次转移</button>
+                        <button class="refresh-btn" onclick="loadLeases({ force: true })">刷新</button>
+                    </div>
+                </div>
+
+                <div id="leasesTable">
+                    <div class="loading">加载中...</div>
+                </div>
+
+                <div style="margin-top: 16px;">
+                    <div style="color:#86868b; font-size: 13px; line-height: 1.6;">
+                        提示：到期计算以 <code>join_at</code>（用户接受邀请加入 Team 的时间）为准；若 <code>status=awaiting_join</code> 表示还未检测到加入时间。
+                    </div>
+                    <div id="leaseEventsTable" style="margin-top: 10px;"></div>
                 </div>
             </div>
         </div>
@@ -629,6 +656,7 @@
             else if (tabName === 'redemptions') loadRedemptions();
             else if (tabName === 'teams') loadTeamStats();
             else if (tabName === 'teamManagement') loadTeamList();
+            else if (tabName === 'leases') loadLeases();
         }
 
         // ==================== 简单缓存（减少切换 Tab 时的重复请求卡顿） ====================
@@ -636,13 +664,17 @@
             stats: 15000,
             teams: 15000,
             codes: 8000,
-            redemptions: 8000
+            redemptions: 8000,
+            leases: 8000,
+            leaseEvents: 8000,
         };
 
         const cacheState = {
             stats: { ts: 0, data: null, promise: null },
             teams: { ts: 0, data: null, promise: null },
             redemptions: { ts: 0, data: null, promise: null },
+            leases: { ts: 0, data: null, promise: null },
+            leaseEvents: new Map(), // email -> { ts, data, promise }
             codes: new Map(), // key -> { ts, data, promise }
         };
 
@@ -882,6 +914,43 @@
                 entry.promise = null;
             });
 
+            return entry.promise;
+        }
+
+        async function getLeases({ limit = 100, force = false } = {}) {
+            const entry = cacheState.leases;
+            if (!force && isFresh(entry, CACHE_TTL_MS.leases)) return entry.data;
+            if (!force && entry.promise) return entry.promise;
+
+            entry.promise = fetchJson(`/api/admin/leases?limit=${limit}`).then((result) => {
+                entry.data = result.data;
+                entry.ts = Date.now();
+                return entry.data;
+            }).finally(() => {
+                entry.promise = null;
+            });
+
+            return entry.promise;
+        }
+
+        async function getLeaseEvents({ email = '', limit = 200, force = false } = {}) {
+            const key = (email || '').trim().toLowerCase() || '__all__';
+            let entry = cacheState.leaseEvents.get(key);
+            if (!entry) entry = { ts: 0, data: null, promise: null };
+            if (!force && isFresh(entry, CACHE_TTL_MS.leaseEvents)) return entry.data;
+            if (!force && entry.promise) return entry.promise;
+
+            const qs = new URLSearchParams({ limit: String(limit) });
+            if (key !== '__all__') qs.set('email', key);
+
+            entry.promise = fetchJson(`/api/admin/leases/events?${qs.toString()}`).then((result) => {
+                entry.data = result.data;
+                entry.ts = Date.now();
+                cacheState.leaseEvents.set(key, entry);
+                return entry.data;
+            }).finally(() => { entry.promise = null; });
+
+            cacheState.leaseEvents.set(key, entry);
             return entry.promise;
         }
 
@@ -1150,6 +1219,127 @@
                 loadStats({ force: true });
             } catch (error) {
                 showToast('全部删除失败: ' + error.message, 'danger', 2400);
+            }
+        }
+
+        // ==================== 成员到期/转移 ====================
+
+        async function loadLeases(options = {}) {
+            const leasesTable = document.getElementById('leasesTable');
+            const eventsTable = document.getElementById('leaseEventsTable');
+            leasesTable.innerHTML = '<div class="loading">加载中...</div>';
+            if (eventsTable) eventsTable.innerHTML = '';
+
+            try {
+                const leases = await getLeases({ limit: 200, force: !!options.force });
+                let html = '<table><thead><tr><th>邮箱</th><th>当前Team</th><th>状态</th><th>join_at</th><th>expires_at</th><th>转移次数</th><th>下次重试</th><th>最后错误</th><th>事件</th></tr></thead><tbody>';
+
+                leases.forEach(l => {
+                    const email = escapeHtml(l.email || '-');
+                    const team = escapeHtml(l.team_name || '-');
+                    const status = escapeHtml(l.status || '-');
+                    const joinAt = l.join_at ? new Date(l.join_at).toLocaleString() : '-';
+                    const expAt = l.expires_at ? new Date(l.expires_at).toLocaleString() : '-';
+                    const nextAt = l.next_attempt_at ? new Date(l.next_attempt_at).toLocaleString() : '-';
+                    const err = escapeHtml(l.last_error || '');
+                    const count = Number(l.transfer_count ?? 0);
+                    const emailJson = JSON.stringify((l.email || '').toLowerCase());
+
+                    const badgeClass =
+                        status === 'active' ? 'success' :
+                        status === 'awaiting_join' ? 'warning' :
+                        status === 'awaiting_transfer' ? 'warning' :
+                        status === 'transferring' ? 'info' :
+                        'info';
+
+                    html += `
+                        <tr>
+                            <td>${email}</td>
+                            <td><span class="team-cell" title="${team}">${team}</span></td>
+                            <td><span class="badge ${badgeClass}">${status}</span></td>
+                            <td>${joinAt}</td>
+                            <td>${expAt}</td>
+                            <td>${count}</td>
+                            <td>${nextAt}</td>
+                            <td style="max-width: 240px;"><span class="team-cell" title="${err}">${err || '-'}</span></td>
+                            <td><button class="action-btn enable" onclick="loadLeaseEvents(${emailJson})">查看</button></td>
+                        </tr>
+                    `;
+                });
+
+                html += '</tbody></table>';
+                leasesTable.innerHTML = html;
+            } catch (error) {
+                console.error('加载租约失败:', error);
+                leasesTable.innerHTML = '<div class="loading">加载失败</div>';
+            }
+        }
+
+        async function loadLeaseEvents(email) {
+            const eventsTable = document.getElementById('leaseEventsTable');
+            if (!eventsTable) return;
+            eventsTable.innerHTML = '<div class="loading">加载事件中...</div>';
+
+            const target = (email || document.getElementById('leaseEmailFilter')?.value || '').trim().toLowerCase();
+
+            try {
+                const events = await getLeaseEvents({ email: target, limit: 200, force: true });
+                let html = '<table><thead><tr><th>时间</th><th>邮箱</th><th>动作</th><th>from</th><th>to</th><th>信息</th></tr></thead><tbody>';
+                events.forEach(e => {
+                    const t = e.created_at ? new Date(e.created_at).toLocaleString() : '-';
+                    html += `
+                        <tr>
+                            <td>${escapeHtml(t)}</td>
+                            <td>${escapeHtml(e.email || '-')}</td>
+                            <td>${escapeHtml(e.action || '-')}</td>
+                            <td>${escapeHtml(e.from_team || '-')}</td>
+                            <td>${escapeHtml(e.to_team || '-')}</td>
+                            <td style="max-width: 420px;"><span class="team-cell" title="${escapeHtml(e.message || '')}">${escapeHtml(e.message || '') || '-'}</span></td>
+                        </tr>
+                    `;
+                });
+                html += '</tbody></table>';
+                eventsTable.innerHTML = html;
+            } catch (error) {
+                eventsTable.innerHTML = '<div class="loading">加载失败</div>';
+            }
+        }
+
+        async function syncJoinTimes() {
+            const ok = await uiConfirm('将同步 awaiting_join 的 join_at（以邀请 accepted/completed 时间为准）。\n\n继续？', { title: '同步加入时间' });
+            if (!ok) return;
+
+            try {
+                const res = await fetchJson('/api/admin/leases/sync-join', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ limit: 80 })
+                });
+                showToast(res.message || '同步完成', 'success', 2000);
+                cacheState.leases.ts = 0;
+                cacheState.leaseEvents.clear();
+                loadLeases({ force: true });
+            } catch (e) {
+                showToast('同步失败: ' + e.message, 'danger', 2600);
+            }
+        }
+
+        async function runTransferOnce() {
+            const ok = await uiConfirm('将执行一轮到期转移（可能会触发自动退出旧 Team + 发送新 Team 邀请）。\n\n继续？', { title: '执行转移' });
+            if (!ok) return;
+
+            try {
+                const res = await fetchJson('/api/admin/leases/run-transfer-once', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ limit: 20 })
+                });
+                showToast(res.message || '执行完成', 'success', 2200);
+                cacheState.leases.ts = 0;
+                cacheState.leaseEvents.clear();
+                loadLeases({ force: true });
+            } catch (e) {
+                showToast('执行失败: ' + e.message, 'danger', 2600);
             }
         }
 

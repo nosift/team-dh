@@ -237,6 +237,31 @@ def _sync_joined_leases(*, limit: int = 50):
         db.release_lock("auto_transfer_join_sync", lock_by=lock_by)
 
 
+def sync_joined_leases_once(*, limit: int = 50) -> int:
+    """
+    管理后台手动触发：同步 awaiting_join 的 join_at。
+    返回本次成功同步的条数（粗略统计）。
+    """
+    before = 0
+    after = 0
+    try:
+        rows = db.list_member_leases_awaiting_join(limit=limit)
+        before = len(rows)
+    except Exception:
+        before = 0
+
+    _sync_joined_leases(limit=limit)
+
+    try:
+        rows2 = db.list_member_leases_awaiting_join(limit=limit)
+        after = len(rows2)
+    except Exception:
+        after = before
+
+    synced = max(0, before - after)
+    return synced
+
+
 _worker_started = False
 
 

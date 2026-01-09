@@ -425,6 +425,46 @@ class Database:
                 (next_attempt_at.isoformat(sep=" ", timespec="seconds"), message, email),
             )
 
+    def list_member_leases(self, *, limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT *
+                FROM member_leases
+                ORDER BY updated_at DESC, email ASC
+                LIMIT ? OFFSET ?
+            """,
+                (int(limit), int(offset)),
+            )
+            return [dict(row) for row in cursor.fetchall()]
+
+    def list_member_lease_events(self, *, email: str | None = None, limit: int = 200, offset: int = 0) -> List[Dict[str, Any]]:
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            if email:
+                cursor.execute(
+                    """
+                    SELECT *
+                    FROM member_lease_events
+                    WHERE email = ?
+                    ORDER BY created_at DESC, id DESC
+                    LIMIT ? OFFSET ?
+                """,
+                    ((email or "").strip().lower(), int(limit), int(offset)),
+                )
+            else:
+                cursor.execute(
+                    """
+                    SELECT *
+                    FROM member_lease_events
+                    ORDER BY created_at DESC, id DESC
+                    LIMIT ? OFFSET ?
+                """,
+                    (int(limit), int(offset)),
+                )
+            return [dict(row) for row in cursor.fetchall()]
+
     def _ensure_code_lock_columns(self):
         with self.get_connection() as conn:
             cursor = conn.cursor()
