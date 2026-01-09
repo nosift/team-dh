@@ -16,7 +16,7 @@ from datetime import datetime, timedelta
 from database import db
 from logger import log
 import config
-from team_service import invite_single_email, get_invite_status_for_email, remove_member_by_email
+from team_service import invite_single_email, get_invite_status_for_email, remove_member_by_email, get_member_info_for_email
 from redemption_service import RedemptionService
 from date_utils import add_months_same_day
 
@@ -129,24 +129,42 @@ def _sync_joined_leases(*, limit: int = 50):
                 continue
 
             inv = get_invite_status_for_email(team_cfg, email)
-            if not inv.get("found"):
-                continue
-
-            status = (inv.get("status") or "").strip().lower()
-            if status not in {"accepted", "completed", "done"}:
-                continue
-
-            ts = inv.get("timestamp")
             join_at = None
-            if isinstance(ts, str) and ts:
-                # 兼容 ISO / 带Z / 带毫秒
-                try:
-                    join_at = datetime.fromisoformat(ts.replace("Z", "+00:00")).replace(tzinfo=None)
-                except Exception:
-                    join_at = None
+
+            # 1) 优先从 invites 找 accepted/completed 的时间
+            if inv.get("found"):
+                status = (inv.get("status") or "").strip().lower()
+                if status in {"accepted", "completed", "done"}:
+                    ts = inv.get("timestamp")
+                    if isinstance(ts, str) and ts:
+                        try:
+                            join_at = datetime.fromisoformat(ts.replace("Z", "+00:00")).replace(tzinfo=None)
+                        except Exception:
+                            join_at = None
+
+            # 2) 若 invites 不可用/不包含 accepted，则从 members 列表兜底：只要已在成员列表，即视为已加入
             if not join_at:
-                # 兜底：用当前时间近似（不建议，但比永久 awaiting_join 好）
-                join_at = datetime.now()
+                mi = get_member_info_for_email(team_cfg, email)
+                if mi.get("found"):
+                    ts = mi.get("joined_at")
+                    if isinstance(ts, str) and ts:
+                        try:
+                            join_at = datetime.fromisoformat(ts.replace("Z", "+00:00")).replace(tzinfo=None)
+                        except Exception:
+                            join_at = None
+                    if not join_at:
+                        # 成员列表没有明确加入时间字段时，用当前时间近似（并在事件中标注）
+                        join_at = datetime.now()
+                        db.add_member_lease_event(
+                            email=email,
+                            action="joined_fallback",
+                            from_team=team_name,
+                            to_team=None,
+                            message="成员列表未提供加入时间字段，使用当前时间近似 join_at",
+                        )
+
+            if not join_at:
+                continue
 
             expires_at = _expires_at_for_new_term(join_at)
             db.update_member_lease_joined(email=email, join_at=join_at, expires_at=expires_at, from_team=team_name)

@@ -457,6 +457,46 @@ def get_team_members(team: dict, *, max_items: int = 500) -> list:
     return items_all[:max_items]
 
 
+def get_member_info_for_email(team: dict, email: str) -> dict:
+    """
+    在 Team 成员列表中查找邮箱，并尽量返回加入时间字段。
+
+    返回示例：
+      {"found": True, "joined_at": "...", "raw": {...}}
+    """
+    target = (email or "").strip().lower()
+    if not target:
+        return {"found": False}
+
+    members = get_team_members(team, max_items=500)
+    for m in members:
+        if not isinstance(m, dict):
+            continue
+
+        e = (
+            (m.get("email") or "")
+            or ((m.get("user", {}) or {}).get("email") or "")
+            or ((m.get("account_user", {}) or {}).get("email") or "")
+        )
+        e = (e or "").strip().lower()
+        if e != target:
+            continue
+
+        joined_at = (
+            m.get("joined_at")
+            or m.get("joinedAt")
+            or m.get("created_at")
+            or m.get("createdAt")
+            or m.get("added_at")
+            or m.get("addedAt")
+            or m.get("updated_at")
+            or m.get("updatedAt")
+        )
+        return {"found": True, "joined_at": joined_at, "raw": m}
+
+    return {"found": False}
+
+
 def remove_member_by_email(team: dict, email: str) -> tuple[bool, str]:
     """
     从 Team 移除指定邮箱对应的成员。
