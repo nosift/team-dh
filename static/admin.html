@@ -441,7 +441,7 @@
             <button class="tab-btn" onclick="switchTab(event, 'redemptions')">兑换记录</button>
             <button class="tab-btn" onclick="switchTab(event, 'teams')">Team统计</button>
             <button class="tab-btn" onclick="switchTab(event, 'teamManagement')">Team管理</button>
-            <button class="tab-btn" onclick="switchTab(event, 'leases')">到期转移</button>
+            <button class="tab-btn" onclick="switchTab(event, 'leases')">到期/转移</button>
         </div>
 
         <div class="tab-content">
@@ -538,7 +538,7 @@
 
                 <div style="margin-top: 16px;">
                     <div style="color:#86868b; font-size: 13px; line-height: 1.6;">
-                        提示：到期计算以 <code>join_at</code>（用户接受邀请加入 Team 的时间）为准；若 <code>status=awaiting_join</code> 表示还未检测到加入时间。
+                        提示：到期计算以 <code>join_at</code>（加入时间）为准；若状态为“待同步加入时间”，表示还未拿到准确加入时间。
                     </div>
                     <div id="leaseEventsTable" style="margin-top: 10px;"></div>
                 </div>
@@ -683,6 +683,50 @@
 
         // ==================== UI 提示/弹窗（居中显示） ====================
         const UI_CONFIRM_PHRASE = 'DELLT';
+
+        // ==================== 文案/状态中文化（只影响展示，不影响后端存储） ====================
+        const LABELS = {
+            codeStatus: {
+                active: '激活',
+                disabled: '禁用',
+                expired: '过期',
+                used_up: '已用完',
+                deleted: '已删除',
+            },
+            inviteStatus: {
+                success: '成功',
+                failed: '失败',
+                inviting: '邀请中',
+                pending: '待处理',
+            },
+            leaseStatus: {
+                awaiting_join: '待同步加入时间',
+                active: '生效中',
+                awaiting_transfer: '待转移',
+                transferring: '转移中',
+            },
+            leaseAction: {
+                created: '创建租约',
+                manual_upsert: '手动录入/更新',
+                joined: '已同步加入时间',
+                joined_fallback: '已加入（近似时间）',
+                sync_invite_status: '邀请状态未完成',
+                sync_invite_error: '拉取邀请失败',
+                sync_member_error: '拉取成员失败',
+                sync_member_no_time: '成员记录无加入时间',
+                sync_not_joined: '未检测到已加入',
+                left_old_team: '已退出旧团队',
+                leave_old_failed: '退出旧团队失败',
+                transferred: '已发送新团队邀请',
+                transfer_failed: '转移失败',
+                force_expire: '强制到期（测试）',
+            },
+        };
+
+        function labelOf(map, key, fallback = '') {
+            if (!key) return fallback;
+            return (map && map[key]) ? map[key] : fallback;
+        }
 
         function escapeHtml(str) {
             return String(str ?? '').replace(/[&<>"']/g, (m) => ({
@@ -1021,9 +1065,7 @@
                             ? ''
                             : `<button class="action-btn enable" onclick="updateCodeStatus(${codeJson}, 'active')">启用</button>`);
 
-                    const statusText =
-                        code.status === 'used_up' ? '已用完' :
-                        escapeHtml(code.status);
+                    const statusText = escapeHtml(labelOf(LABELS.codeStatus, code.status, code.status));
 
                     html += `
                         <tr>
@@ -1064,13 +1106,14 @@
                     const safeEmail = escapeHtml(r.email);
                     const safeCode = escapeHtml(r.code);
                     const safeIp = escapeHtml(r.ip_address || '-');
+                    const statusText = escapeHtml(labelOf(LABELS.inviteStatus, r.invite_status, r.invite_status));
 
                     html += `
                         <tr>
                             <td>${safeEmail}</td>
                             <td><code class="copyable" data-copy="${safeCode}" title="点击复制">${safeCode}</code></td>
                             <td><span class="team-cell" title="${safeTeamName}">${safeTeamName}</span></td>
-                            <td><span class="badge ${statusBadge}">${r.invite_status}</span></td>
+                            <td><span class="badge ${statusBadge}">${statusText}</span></td>
                             <td>${time}</td>
                             <td>${safeIp}</td>
                             <td><button class="action-btn danger" onclick="deleteRedemption(${r.id})">删除</button></td>
@@ -1235,14 +1278,15 @@
 
             try {
                 const leases = await getLeases({ limit: 200, force: !!options.force });
-                let html = '<table><thead><tr><th>邮箱</th><th>当前Team</th><th>状态</th><th>join_at</th><th>expires_at</th><th>转移次数</th><th>下次重试</th><th>最后错误</th><th>操作</th></tr></thead><tbody>';
+                let html = '<table><thead><tr><th>邮箱</th><th>当前团队</th><th>状态</th><th>加入时间</th><th>到期时间</th><th>转移次数</th><th>下次重试</th><th>最后错误</th><th>操作</th></tr></thead><tbody>';
 
                 leases.forEach(l => {
                     const email = escapeHtml(l.email || '-');
                     const team = escapeHtml(l.team_name || '-');
-                    const status = escapeHtml(l.status || '-');
+                    const statusKey = (l.status || '').trim();
+                    const status = escapeHtml(labelOf(LABELS.leaseStatus, statusKey, statusKey || '-'));
                     const joinAt = l.join_at ? new Date(l.join_at).toLocaleString() : '-';
-                    const expAt = (l.status === 'awaiting_join') ? '待同步' : (l.expires_at ? new Date(l.expires_at).toLocaleString() : '-');
+                    const expAt = (statusKey === 'awaiting_join') ? '待同步' : (l.expires_at ? new Date(l.expires_at).toLocaleString() : '-');
                     const nextAt = l.next_attempt_at ? new Date(l.next_attempt_at).toLocaleString() : '-';
                     const err = escapeHtml(l.last_error || '');
                     const count = Number(l.transfer_count ?? 0);
@@ -1250,10 +1294,10 @@
                     const safeEmailAttr = escapeHtml(rawEmail);
 
                     const badgeClass =
-                        status === 'active' ? 'success' :
-                        status === 'awaiting_join' ? 'warning' :
-                        status === 'awaiting_transfer' ? 'warning' :
-                        status === 'transferring' ? 'info' :
+                        statusKey === 'active' ? 'success' :
+                        statusKey === 'awaiting_join' ? 'warning' :
+                        statusKey === 'awaiting_transfer' ? 'warning' :
+                        statusKey === 'transferring' ? 'info' :
                         'info';
 
                     html += `
@@ -1292,14 +1336,16 @@
 
             try {
                 const events = await getLeaseEvents({ email: target, limit: 200, force: true });
-                let html = '<table><thead><tr><th>时间</th><th>邮箱</th><th>动作</th><th>from</th><th>to</th><th>信息</th></tr></thead><tbody>';
+                let html = '<table><thead><tr><th>时间</th><th>邮箱</th><th>事件</th><th>原团队</th><th>新团队</th><th>说明</th></tr></thead><tbody>';
                 events.forEach(e => {
                     const t = e.created_at ? new Date(e.created_at).toLocaleString() : '-';
+                    const actionKey = (e.action || '').trim();
+                    const actionText = escapeHtml(labelOf(LABELS.leaseAction, actionKey, actionKey || '-'));
                     html += `
                         <tr>
                             <td>${escapeHtml(t)}</td>
                             <td>${escapeHtml(e.email || '-')}</td>
-                            <td>${escapeHtml(e.action || '-')}</td>
+                            <td><span class="team-cell" title="${escapeHtml(actionKey)}">${actionText}</span></td>
                             <td>${escapeHtml(e.from_team || '-')}</td>
                             <td>${escapeHtml(e.to_team || '-')}</td>
                             <td style="max-width: 420px;"><span class="team-cell" title="${escapeHtml(e.message || '')}">${escapeHtml(e.message || '') || '-'}</span></td>

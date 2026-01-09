@@ -21,17 +21,16 @@
 
 ---
 
-## 2. join_at / expires_at 的定义（你最关心的）
+## 2. `join_at` / `expires_at` 的定义（你最关心的）
 
-- `join_at`：系统检测到该邮箱在当前 Team 的邀请状态变成 `accepted/completed` 的时间（来自 ChatGPT invites 列表）。
-- 如果 invites 接口无法返回 `accepted/completed`（有些情况下邀请被“转成成员”后不再出现在 invites 列表），系统会退而求其次查询 **members 成员列表**：只要邮箱已经在成员列表中，就认为已加入，并尽量读取成员记录里的 `joined_at/created_at`；若成员记录不提供时间字段，则用“当前时间”近似并在事件里标注为 `joined_fallback`。
-- `expires_at`：用 `join_at` 计算的“下个月同日同时间”。
+- `join_at`：加入时间（系统确认“该邮箱已成为 Team 成员”的时间）。系统会优先从 invites 的 `accepted/completed` 获取；拿不到时再尝试从成员接口拿 `joined_at/created_at`。
+- `expires_at`：到期时间（用 `join_at` 计算的“下个月同日同时间”）。
   - 例：`2026-01-07 12:00` → `2026-02-07 12:00`
   - 若目标月无该日：取当月最后一天（如 `1/31 → 2/28 或 2/29`）
 
-如果你在「到期转移」看到：
-- `status=awaiting_join` 且 `join_at=-`：表示用户还没接受邀请，或系统还没同步到 invites 的 accepted 状态。
-- `expires_at=待同步`：表示等待 join_at 确认后再以 join_at 为准。
+如果你在「到期/转移」看到：
+- 状态为“待同步加入时间”，且加入时间为 `-`：表示系统还没拿到“已加入”的证据（或接口拿不到加入时间字段）。
+- 到期时间显示“待同步”：表示等待拿到 `join_at` 后再开始严格计时。
 
 重要提醒（非常容易误解）：
 - “邀请成功/拉入 Team”通常只代表**邀请已发送**，并不等于用户已点击邮件接受加入。

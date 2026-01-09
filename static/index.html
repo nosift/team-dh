@@ -262,7 +262,7 @@
                 if (result.valid) {
                     codeInfo.innerHTML = `
                         有效兑换码<br>
-                        <strong>Team:</strong> ${result.team}<br>
+                        <strong>团队:</strong> ${result.team}<br>
                         <strong>剩余可用次数:</strong> ${result.remaining_uses}
                         ${result.expires_at ? `<br><strong>过期时间:</strong> ${new Date(result.expires_at).toLocaleString()}` : ''}
                     `;
