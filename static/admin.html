@@ -887,6 +887,20 @@
             if (text) copyText(text);
         });
 
+        // Team 管理按钮事件委托（避免 inline onclick 的引号问题）
+        document.addEventListener('click', (e) => {
+            const btn = e.target && e.target.closest ? e.target.closest('button[data-team-action]') : null;
+            if (!btn) return;
+            const action = (btn.getAttribute('data-team-action') || '').trim();
+            const idx = parseInt(btn.getAttribute('data-index') || '', 10);
+            const name = (btn.getAttribute('data-team-name') || '').trim();
+            if (!Number.isFinite(idx)) return;
+
+            if (action === 'edit') editTeam(idx);
+            else if (action === 'generate') showGenerateCodesModal(idx, name);
+            else if (action === 'delete') deleteTeam(idx, name);
+        }, true);
+
         function isFresh(entry, ttlMs) {
             return entry && entry.data && (Date.now() - entry.ts) < ttlMs;
         }
@@ -1595,7 +1609,6 @@
                     const accountIdDisplay = accountId ? `${accountId.substring(0, 16)}...` : '-';
                     const safeName = escapeHtml(team.name);
                     const safeEmail = escapeHtml(team.email);
-                    const teamNameJson = JSON.stringify(team.name);
 
                     html += `
                         <tr>
@@ -1604,9 +1617,9 @@
                             <td><code>${accountIdDisplay}</code></td>
                             <td>${tokenBadge}</td>
                             <td>
-                                <button class="action-btn enable" onclick="editTeam(${team.index})">编辑</button>
-                                <button class="action-btn enable" onclick="showGenerateCodesModal(${team.index}, ${teamNameJson})">生成兑换码</button>
-                                <button class="action-btn disable" onclick="deleteTeam(${team.index}, ${teamNameJson})">删除</button>
+                                <button class="action-btn enable" data-team-action="edit" data-index="${team.index}">编辑</button>
+                                <button class="action-btn enable" data-team-action="generate" data-index="${team.index}" data-team-name="${safeName}">生成兑换码</button>
+                                <button class="action-btn disable" data-team-action="delete" data-index="${team.index}" data-team-name="${safeName}">删除</button>
                             </td>
                         </tr>
                     `;
