@@ -814,6 +814,7 @@ def admin_generate_codes_for_team(index):
         count = int(data.get("count", 4))
         max_uses = int(data.get("max_uses", 1))
         expires_days = data.get("expires_days")  # None 表示永久有效
+        requested_team_name = (data.get("team_name") or "").strip()
 
         if count < 1 or count > 1000:
             return jsonify({"success": False, "error": "生成数量必须在 1-1000 之间"}), 400
@@ -823,10 +824,24 @@ def admin_generate_codes_for_team(index):
 
         # 获取 Team 名称
         teams = team_manager.get_team_list()
-        if index < 0 or index >= len(teams):
-            return jsonify({"success": False, "error": f"Team 索引 {index} 不存在"}), 404
+        team_name = None
 
-        team_name = teams[index]["name"]
+        # 1) 优先用索引（兼容旧前端）
+        if 0 <= index < len(teams):
+            team_name = teams[index]["name"]
+
+        # 2) 如果前端传了 team_name，则用它做校验/兜底（避免索引漂移导致 404）
+        if requested_team_name:
+            if team_name and team_name != requested_team_name:
+                # 索引可能已漂移：按名字重新查
+                team_name = None
+            if not team_name:
+                matched = next((t for t in teams if (t.get("name") or "") == requested_team_name), None)
+                if matched:
+                    team_name = matched.get("name")
+
+        if not team_name:
+            return jsonify({"success": False, "error": f"Team 不存在（index={index}, team_name={requested_team_name or '-'}）"}), 404
 
         # 生成兑换码
         generator = CodeGenerator()
