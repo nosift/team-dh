@@ -331,7 +331,7 @@
             right: auto;
             bottom: auto;
             transform: translate(-50%, -50%);
-            z-index: 2000;
+            z-index: 3000;
             background: rgba(0, 0, 0, 0.82);
             color: #fff;
             padding: 12px 16px;
@@ -1809,7 +1809,9 @@
                 const copyBtn = makeButton({
                     text: '复制全部',
                     className: 'action-btn enable',
-                    onClick: () => copyText(codesText)
+                    onClick: () => {
+                        Promise.resolve(copyText(codesText)).finally(() => closeModal());
+                    }
                 });
                 const okBtn = makeButton({
                     text: '关闭',
