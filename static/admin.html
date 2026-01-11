@@ -540,6 +540,10 @@
                     <div style="color:#86868b; font-size: 13px; line-height: 1.6;">
                         提示：到期计算以 <code>join_at</code>（加入时间）为准；若状态为“待同步加入时间”，表示还未拿到准确加入时间。
                     </div>
+                    <label style="display:inline-flex; align-items:center; gap:8px; margin-top:10px; font-size:13px; color:#86868b; user-select:none;">
+                        <input id="leaseHideNoise" type="checkbox" checked />
+                        隐藏同步噪音（member_no_time / not_joined / invite_status）
+                    </label>
                     <div id="leaseEventsTable" style="margin-top: 10px;"></div>
                 </div>
             </div>
@@ -1358,8 +1362,12 @@
 
             try {
                 const events = await getLeaseEvents({ email: target, limit: 200, force: true });
+                const hideNoise = !!document.getElementById('leaseHideNoise')?.checked;
+                const filtered = hideNoise
+                    ? (events || []).filter(e => !new Set(['sync_member_no_time', 'sync_not_joined', 'sync_invite_status']).has((e.action || '').trim()))
+                    : (events || []);
                 let html = '<table><thead><tr><th>时间</th><th>邮箱</th><th>事件</th><th>原团队</th><th>新团队</th><th>说明</th></tr></thead><tbody>';
-                events.forEach(e => {
+                filtered.forEach(e => {
                     const t = e.created_at ? new Date(e.created_at).toLocaleString() : '-';
                     const actionKey = (e.action || '').trim();
                     const actionText = escapeHtml(labelOf(LABELS.leaseAction, actionKey, actionKey || '-'));

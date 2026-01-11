@@ -286,21 +286,60 @@ class Database:
             return [dict(row) for row in cursor.fetchall()]
 
     def list_member_leases_awaiting_join(self, *, limit: int = 50) -> List[Dict[str, Any]]:
+        return self.list_member_leases_awaiting_join_with_due(limit=limit, include_not_due=False)
+
+    def list_member_leases_awaiting_join_with_due(self, *, limit: int = 50, include_not_due: bool = False) -> List[Dict[str, Any]]:
         now = datetime.now().isoformat(sep=" ", timespec="seconds")
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            if include_not_due:
+                cursor.execute(
+                    """
+                    SELECT *
+                    FROM member_leases
+                    WHERE status = 'awaiting_join'
+                    ORDER BY updated_at DESC
+                    LIMIT ?
+                """,
+                    (int(limit),),
+                )
+            else:
+                cursor.execute(
+                    """
+                    SELECT *
+                    FROM member_leases
+                    WHERE status = 'awaiting_join'
+                      AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
+                    ORDER BY updated_at DESC
+                    LIMIT ?
+                """,
+                    (now, int(limit)),
+                )
+            return [dict(row) for row in cursor.fetchall()]
+
+    def defer_member_lease_join_sync(self, *, email: str, next_attempt_at: datetime, last_error: str | None = None) -> bool:
+        email = (email or "").strip().lower()
+        if not email:
+            return False
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
                 """
-                SELECT *
-                FROM member_leases
-                WHERE status = 'awaiting_join'
-                  AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
-                ORDER BY updated_at DESC
-                LIMIT ?
+                UPDATE member_leases
+                SET next_attempt_at = ?,
+                    last_error = ?,
+                    last_synced_at = CURRENT_TIMESTAMP,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE email = ?
+                  AND status = 'awaiting_join'
             """,
-                (now, int(limit)),
+                (
+                    next_attempt_at.isoformat(sep=" ", timespec="seconds"),
+                    last_error,
+                    email,
+                ),
             )
-            return [dict(row) for row in cursor.fetchall()]
+            return cursor.rowcount == 1
 
     def update_member_lease_joined(
         self,

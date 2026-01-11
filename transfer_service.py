@@ -79,6 +79,31 @@ def _next_attempt_time(attempts: int) -> datetime:
     return datetime.now() + timedelta(seconds=secs)
 
 
+def _defer_join_sync_seconds(reason: str) -> int:
+    # 让自动同步不会刷屏：不同原因采用不同延迟（手动“同步加入时间”会强制忽略 next_attempt_at）
+    if reason in {"member_no_time"}:
+        return 24 * 3600
+    if reason in {"invite_not_accepted"}:
+        return 20 * 60
+    if reason in {"invite_error", "member_error"}:
+        return 60 * 60
+    if reason in {"not_joined"}:
+        return 30 * 60
+    return 30 * 60
+
+
+def _defer_join_sync(*, lease: dict, message: str, reason: str):
+    try:
+        email = (lease.get("email") or "").strip().lower()
+        if not email:
+            return
+        delay = _defer_join_sync_seconds(reason)
+        next_at = datetime.now() + timedelta(seconds=delay)
+        db.defer_member_lease_join_sync(email=email, next_attempt_at=next_at, last_error=message)
+    except Exception:
+        pass
+
+
 def run_transfer_once(*, limit: int = 20) -> int:
     """
     执行一轮“到期自动转移”，返回成功转移人数。
@@ -90,7 +115,7 @@ def run_transfer_once(*, limit: int = 20) -> int:
     moved = 0
     try:
         # 先同步“实际加入时间”（以 invite accepted 的时间为准）
-        _sync_joined_leases(limit=50)
+        _sync_joined_leases(limit=50, include_not_due=False)
 
         due = db.list_due_member_leases(limit=limit)
         if not due:
@@ -104,7 +129,7 @@ def run_transfer_once(*, limit: int = 20) -> int:
         db.release_lock("auto_transfer_monthly", lock_by=lock_by)
 
 
-def _sync_joined_leases(*, limit: int = 50):
+def _sync_joined_leases(*, limit: int = 50, include_not_due: bool = False):
     """
     将 member_leases 中 awaiting_join 的记录，尽量同步为“已加入”的真实时间。
     以当前 Team 的 invites 中 accepted/completed 的时间字段为准。
@@ -122,7 +147,7 @@ def _sync_joined_leases(*, limit: int = 50):
     not_joined = 0
     skipped = 0
     try:
-        rows = db.list_member_leases_awaiting_join(limit=limit)
+        rows = db.list_member_leases_awaiting_join_with_due(limit=limit, include_not_due=include_not_due)
         if not rows:
             return {
                 "checked": 0,
@@ -173,6 +198,8 @@ def _sync_joined_leases(*, limit: int = 50):
                             join_at = None
                 else:
                     invite_not_accepted += 1
+                    if not include_not_due:
+                        _defer_join_sync(lease=lease, message=f"invites 状态={status or 'unknown'}，未达到 accepted/completed", reason="invite_not_accepted")
                     db.add_member_lease_event(
                         email=email,
                         action="sync_invite_status",
@@ -182,6 +209,8 @@ def _sync_joined_leases(*, limit: int = 50):
                     )
             elif inv.get("error"):
                 invite_errors += 1
+                if not include_not_due:
+                    _defer_join_sync(lease=lease, message=f"拉取 invites 失败：{inv.get('error')}", reason="invite_error")
                 db.add_member_lease_event(
                     email=email,
                     action="sync_invite_error",
@@ -217,6 +246,8 @@ def _sync_joined_leases(*, limit: int = 50):
                             )
                         else:
                             member_no_time += 1
+                            if not include_not_due:
+                                _defer_join_sync(lease=lease, message="成员列表未提供加入时间字段，未写入 join_at（保持 awaiting_join；可手动录入 join_at / 在后台点“近似加入” / 或开启 AUTO_TRANSFER_ALLOW_APPROX_JOIN_AT）", reason="member_no_time")
                             db.add_member_lease_event(
                                 email=email,
                                 action="sync_member_no_time",
@@ -227,6 +258,8 @@ def _sync_joined_leases(*, limit: int = 50):
                             continue
                 elif mi.get("error"):
                     member_errors += 1
+                    if not include_not_due:
+                        _defer_join_sync(lease=lease, message=f"拉取 members 失败：{mi.get('error')}", reason="member_error")
                     db.add_member_lease_event(
                         email=email,
                         action="sync_member_error",
@@ -237,6 +270,8 @@ def _sync_joined_leases(*, limit: int = 50):
 
             if not join_at:
                 not_joined += 1
+                if not include_not_due:
+                    _defer_join_sync(lease=lease, message="未在 invites(accepted/completed) 或 members 中找到已加入证据", reason="not_joined")
                 db.add_member_lease_event(
                     email=email,
                     action="sync_not_joined",
@@ -308,6 +343,7 @@ def _sync_joined_lease_for_email(email: str) -> dict:
                 except Exception:
                     join_at = None
         else:
+            _defer_join_sync(lease=lease, message=f"invites 状态={status or 'unknown'}，未达到 accepted/completed", reason="invite_not_accepted")
             db.add_member_lease_event(
                 email=target,
                 action="sync_invite_status",
@@ -316,6 +352,7 @@ def _sync_joined_lease_for_email(email: str) -> dict:
                 message=f"invites 状态={status or 'unknown'}，未达到 accepted/completed",
             )
     elif inv.get("error"):
+        _defer_join_sync(lease=lease, message=f"拉取 invites 失败：{inv.get('error')}", reason="invite_error")
         db.add_member_lease_event(
             email=target,
             action="sync_invite_error",
@@ -358,8 +395,10 @@ def _sync_joined_lease_for_email(email: str) -> dict:
                         to_team=None,
                         message="成员列表未提供加入时间字段，未写入 join_at（保持 awaiting_join；可手动录入 join_at / 在后台点“近似加入” / 或开启 AUTO_TRANSFER_ALLOW_APPROX_JOIN_AT）",
                     )
+                    _defer_join_sync(lease=lease, message="成员列表未提供加入时间字段，未写入 join_at（保持 awaiting_join；可手动录入 join_at / 在后台点“近似加入” / 或开启 AUTO_TRANSFER_ALLOW_APPROX_JOIN_AT）", reason="member_no_time")
                     return {"checked": 1, "synced": 0, "reason": "member_no_time"}
         elif mi.get("error"):
+            _defer_join_sync(lease=lease, message=f"拉取 members 失败：{mi.get('error')}", reason="member_error")
             db.add_member_lease_event(
                 email=target,
                 action="sync_member_error",
@@ -376,6 +415,7 @@ def _sync_joined_lease_for_email(email: str) -> dict:
             to_team=None,
             message="未在 invites(accepted/completed) 或 members 中找到已加入证据",
         )
+        _defer_join_sync(lease=lease, message="未在 invites(accepted/completed) 或 members 中找到已加入证据", reason="not_joined")
         return {"checked": 1, "synced": 0, "reason": "not_joined"}
 
     expires_at = _expires_at_for_new_term(join_at)
@@ -388,12 +428,12 @@ def sync_joined_leases_once(*, limit: int = 50) -> int:
     管理后台手动触发：同步 awaiting_join 的 join_at。
     返回本次成功同步的条数（粗略统计）。
     """
-    result = _sync_joined_leases(limit=limit)
+    result = _sync_joined_leases(limit=limit, include_not_due=True)
     return int((result or {}).get("synced") or 0)
 
 
 def sync_joined_leases_once_detailed(*, limit: int = 50) -> dict:
-    result = _sync_joined_leases(limit=limit)
+    result = _sync_joined_leases(limit=limit, include_not_due=True)
     return {k: int(v or 0) for k, v in (result or {}).items()}
 
 
