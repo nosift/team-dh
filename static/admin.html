@@ -580,7 +580,10 @@
                 <label style="display: block; margin-bottom: 8px; color: #1d1d1f; font-weight: 500;">Access Token <span style="color: #86868b; font-weight: 400;">(可选，编辑时不填则不更新)</span></label>
                 <textarea id="teamAccessToken" rows="4" placeholder="eyJhbGci..." style="width: 100%; padding: 12px; border: 1px solid #d2d2d7; border-radius: 10px; font-size: 13px; font-family: 'SF Mono', Monaco, monospace;"></textarea>
                 <div style="margin-top: 8px; font-size: 13px; color: #86868b;">
-                    提示: 访问 <a href="https://chatgpt.com/api/auth/session" target="_blank" style="color: #000;">https://chatgpt.com/api/auth/session</a> 获取 accessToken
+                    提示: 访问
+                    <span class="copyable" data-copy="https://chatgpt.com/api/auth/session" title="点击复制" style="color:#000; cursor:pointer; text-decoration:underline;">https://chatgpt.com/api/auth/session</span>
+                    获取 accessToken（点击链接复制）
+                    <a href="https://chatgpt.com/api/auth/session" target="_blank" style="color:#86868b; margin-left:6px;">打开</a>
                 </div>
             </div>
 
@@ -710,6 +713,7 @@
                 manual_upsert: '手动录入/更新',
                 joined: '已同步加入时间',
                 joined_fallback: '已加入（近似时间）',
+                joined_fallback_manual: '已加入（管理员近似）',
                 sync_invite_status: '邀请状态未完成',
                 sync_invite_error: '拉取邀请失败',
                 sync_member_error: '拉取成员失败',
@@ -1306,6 +1310,9 @@
                     const count = Number(l.transfer_count ?? 0);
                     const rawEmail = (l.email || '').toLowerCase();
                     const safeEmailAttr = escapeHtml(rawEmail);
+                    const approxJoinBtn = (statusKey === 'awaiting_join')
+                        ? `<button class="action-btn enable" data-action="lease-mark-joined" data-email="${safeEmailAttr}">近似加入</button>`
+                        : '';
 
                     const badgeClass =
                         statusKey === 'active' ? 'success' :
@@ -1326,6 +1333,7 @@
                             <td style="max-width: 240px;"><span class="team-cell" title="${err}">${err || '-'}</span></td>
                             <td style="display:flex; gap:8px; flex-wrap:wrap;">
                                 <button class="action-btn enable" data-action="lease-view" data-email="${safeEmailAttr}">查看</button>
+                                ${approxJoinBtn}
                                 <button class="action-btn disable" data-action="lease-expire" data-email="${safeEmailAttr}">强制到期</button>
                                 <button class="action-btn enable" data-action="lease-transfer" data-email="${safeEmailAttr}">执行转移</button>
                             </td>
@@ -1382,6 +1390,7 @@
             if (!action || !email) return;
 
             if (action === 'lease-view') loadLeaseEvents(email);
+            else if (action === 'lease-mark-joined') markLeaseJoinedApprox(email);
             else if (action === 'lease-expire') forceExpireLease(email);
             else if (action === 'lease-transfer') runTransferForEmail(email);
         }, true);
@@ -1420,7 +1429,8 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(email ? { email } : { limit: 20 })
                 });
-                showToast(res.message || '执行完成', 'success', 2200);
+                const moved = Number(res?.data?.moved ?? 0);
+                showToast(res.message || '执行完成', moved > 0 ? 'success' : 'warning', 2400);
                 cacheState.leases.ts = 0;
                 cacheState.leaseEvents.clear();
                 loadLeases({ force: true });
@@ -1451,6 +1461,27 @@
             }
         }
 
+        async function markLeaseJoinedApprox(email) {
+            const ok = await uiConfirm(
+                `将尝试从成员列表确认该邮箱已加入；若确认成功，则用“当前时间”近似写入 join_at，使其脱离 awaiting_join 并开始计时。\\n\\n邮箱: ${email}\\n\\n继续？`,
+                { title: '近似加入' }
+            );
+            if (!ok) return;
+            try {
+                const res = await fetchJson('/api/admin/leases/mark-joined', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email, mode: 'now', verify: true })
+                });
+                showToast(res.message || '已写入 join_at', 'success', 2200);
+                cacheState.leases.ts = 0;
+                cacheState.leaseEvents.clear();
+                loadLeases({ force: true });
+            } catch (e) {
+                showToast('近似加入失败: ' + e.message, 'danger', 2600);
+            }
+        }
+
         async function runTransferForEmail(email) {
             const ok = await uiConfirm(`将对该邮箱执行一次“到期转移”（仅在到期时会真正转移）。\\n\\n邮箱: ${email}`, { title: '执行转移' });
             if (!ok) return;
@@ -1460,7 +1491,8 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ email })
                 });
-                showToast(res.message || '执行完成', 'success', 2200);
+                const moved = Number(res?.data?.moved ?? 0);
+                showToast(res.message || '执行完成', moved > 0 ? 'success' : 'warning', 2400);
                 cacheState.leases.ts = 0;
                 cacheState.leaseEvents.clear();
                 loadLeases({ force: true });
@@ -1476,7 +1508,7 @@
             const bodyHtml = `
                 <div style="display:flex; flex-direction:column; gap:10px;">
                     <div style="font-size:13px; color:#86868b; line-height:1.5;">
-                        录入后该邮箱会纳入“到期转移”体系。若不填 join_at，将先进入 awaiting_join，之后用“同步加入时间”自动补 join_at。
+                        录入后该邮箱会纳入“到期转移”体系。推荐填 join_at（从何时开始计时）。更小白的话：只填 expires_at（你希望它哪天到期），系统会自动反推 join_at。
                     </div>
                     <div>
                         <div style="margin-bottom:6px; font-weight:500;">邮箱</div>
@@ -1487,8 +1519,12 @@
                         <select id="leaseUpsertTeam" class="ui-input">${options}</select>
                     </div>
                     <div>
-                        <div style="margin-bottom:6px; font-weight:500;">join_at（可选，ISO 格式）</div>
-                        <input id="leaseUpsertJoinAt" class="ui-input" placeholder="2026-01-07T12:00:00" />
+                        <div style="margin-bottom:6px; font-weight:500;">join_at（可选）</div>
+                        <input id="leaseUpsertJoinAt" class="ui-input" placeholder="从何时开始计时，例如 2026-01-07 12:00:00" />
+                    </div>
+                    <div>
+                        <div style="margin-bottom:6px; font-weight:500;">expires_at（可选）</div>
+                        <input id="leaseUpsertExpiresAt" class="ui-input" placeholder="你希望到期时间，例如 2026-02-07 12:00:00" />
                     </div>
                 </div>
             `;
@@ -1501,6 +1537,7 @@
                     const email = (document.getElementById('leaseUpsertEmail').value || '').trim().toLowerCase();
                     const team_name = (document.getElementById('leaseUpsertTeam').value || '').trim();
                     const join_at = (document.getElementById('leaseUpsertJoinAt').value || '').trim();
+                    const expires_at = (document.getElementById('leaseUpsertExpiresAt').value || '').trim();
                     if (!email || !team_name) {
                         showToast('请填写邮箱和 Team', 'danger', 2200);
                         return;
@@ -1509,7 +1546,7 @@
                         const res = await fetchJson('/api/admin/leases', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ email, team_name, join_at })
+                            body: JSON.stringify({ email, team_name, join_at, expires_at })
                         });
                         closeModal();
                         showToast(res.message || '已录入', 'success', 2000);

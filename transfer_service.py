@@ -18,7 +18,7 @@ from logger import log
 import config
 from team_service import invite_single_email, get_invite_status_for_email, remove_member_by_email, get_member_info_for_email
 from redemption_service import RedemptionService
-from date_utils import add_months_same_day
+from date_utils import add_months_same_day, parse_datetime_loose
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -168,7 +168,7 @@ def _sync_joined_leases(*, limit: int = 50):
                     ts = inv.get("timestamp")
                     if isinstance(ts, str) and ts:
                         try:
-                            join_at = datetime.fromisoformat(ts.replace("Z", "+00:00")).replace(tzinfo=None)
+                            join_at = parse_datetime_loose(ts)
                         except Exception:
                             join_at = None
                 else:
@@ -200,7 +200,7 @@ def _sync_joined_leases(*, limit: int = 50):
                     ts = mi.get("joined_at")
                     if isinstance(ts, str) and ts:
                         try:
-                            join_at = datetime.fromisoformat(ts.replace("Z", "+00:00")).replace(tzinfo=None)
+                            join_at = parse_datetime_loose(ts)
                         except Exception:
                             join_at = None
                     if not join_at:
@@ -222,7 +222,7 @@ def _sync_joined_leases(*, limit: int = 50):
                                 action="sync_member_no_time",
                                 from_team=team_name,
                                 to_team=None,
-                                message="成员列表未提供加入时间字段，未写入 join_at（保持 awaiting_join；可手动录入 join_at 或开启 AUTO_TRANSFER_ALLOW_APPROX_JOIN_AT）",
+                                message="成员列表未提供加入时间字段，未写入 join_at（保持 awaiting_join；可手动录入 join_at / 在后台点“近似加入” / 或开启 AUTO_TRANSFER_ALLOW_APPROX_JOIN_AT）",
                             )
                             continue
                 elif mi.get("error"):
@@ -263,6 +263,126 @@ def _sync_joined_leases(*, limit: int = 50):
         db.release_lock("auto_transfer_join_sync", lock_by=lock_by)
 
 
+def _sync_joined_lease_for_email(email: str) -> dict:
+    """
+    只同步指定邮箱（避免 run_transfer_for_email 时扫全表导致卡顿）。
+    返回：{checked, synced, reason}
+    """
+    target = (email or "").strip().lower()
+    if not target:
+        return {"checked": 0, "synced": 0, "reason": "empty_email"}
+
+    lease = db.get_member_lease(target)
+    if not lease:
+        return {"checked": 0, "synced": 0, "reason": "lease_not_found"}
+
+    if (lease.get("status") or "").strip() != "awaiting_join":
+        return {"checked": 0, "synced": 0, "reason": "not_awaiting_join"}
+
+    team_name = (lease.get("team_name") or "").strip()
+    team_cfg = config.resolve_team(team_name) or {}
+    if not team_cfg:
+        db.add_member_lease_event(
+            email=target,
+            action="sync_skip",
+            from_team=team_name or None,
+            to_team=None,
+            message="Team 配置不存在，无法同步 join_at",
+        )
+        return {"checked": 1, "synced": 0, "reason": "team_cfg_missing"}
+
+    # 1) 优先从 invites 找 accepted/completed 的时间
+    join_at = None
+    try:
+        inv = get_invite_status_for_email(team_cfg, target)
+    except Exception as e:
+        inv = {"found": False, "error": str(e)}
+
+    if inv.get("found"):
+        status = (inv.get("status") or "").strip().lower()
+        if status in {"accepted", "completed", "done"}:
+            ts = inv.get("timestamp")
+            if isinstance(ts, str) and ts:
+                try:
+                    join_at = parse_datetime_loose(ts)
+                except Exception:
+                    join_at = None
+        else:
+            db.add_member_lease_event(
+                email=target,
+                action="sync_invite_status",
+                from_team=team_name,
+                to_team=None,
+                message=f"invites 状态={status or 'unknown'}，未达到 accepted/completed",
+            )
+    elif inv.get("error"):
+        db.add_member_lease_event(
+            email=target,
+            action="sync_invite_error",
+            from_team=team_name,
+            to_team=None,
+            message=f"拉取 invites 失败：{inv.get('error')}",
+        )
+
+    # 2) invites 不可用/不包含 accepted，则从 members 兜底
+    if not join_at:
+        try:
+            mi = get_member_info_for_email(team_cfg, target)
+        except Exception as e:
+            mi = {"found": False, "error": str(e)}
+
+        if mi.get("found"):
+            ts = mi.get("joined_at")
+            if isinstance(ts, str) and ts:
+                try:
+                    join_at = parse_datetime_loose(ts)
+                except Exception:
+                    join_at = None
+
+            if not join_at:
+                allow_approx = _env_bool("AUTO_TRANSFER_ALLOW_APPROX_JOIN_AT", False)
+                if allow_approx:
+                    join_at = datetime.now()
+                    db.add_member_lease_event(
+                        email=target,
+                        action="joined_fallback",
+                        from_team=team_name,
+                        to_team=None,
+                        message="成员列表未提供加入时间字段，已使用当前时间近似 join_at（AUTO_TRANSFER_ALLOW_APPROX_JOIN_AT=true）",
+                    )
+                else:
+                    db.add_member_lease_event(
+                        email=target,
+                        action="sync_member_no_time",
+                        from_team=team_name,
+                        to_team=None,
+                        message="成员列表未提供加入时间字段，未写入 join_at（保持 awaiting_join；可手动录入 join_at / 在后台点“近似加入” / 或开启 AUTO_TRANSFER_ALLOW_APPROX_JOIN_AT）",
+                    )
+                    return {"checked": 1, "synced": 0, "reason": "member_no_time"}
+        elif mi.get("error"):
+            db.add_member_lease_event(
+                email=target,
+                action="sync_member_error",
+                from_team=team_name,
+                to_team=None,
+                message=f"拉取 members 失败：{mi.get('error')}",
+            )
+
+    if not join_at:
+        db.add_member_lease_event(
+            email=target,
+            action="sync_not_joined",
+            from_team=team_name,
+            to_team=None,
+            message="未在 invites(accepted/completed) 或 members 中找到已加入证据",
+        )
+        return {"checked": 1, "synced": 0, "reason": "not_joined"}
+
+    expires_at = _expires_at_for_new_term(join_at)
+    db.update_member_lease_joined(email=target, join_at=join_at, expires_at=expires_at, from_team=team_name)
+    return {"checked": 1, "synced": 1, "reason": "synced"}
+
+
 def sync_joined_leases_once(*, limit: int = 50) -> int:
     """
     管理后台手动触发：同步 awaiting_join 的 join_at。
@@ -286,9 +406,9 @@ def run_transfer_for_email(email: str) -> dict:
     if not target:
         return {"success": False, "moved": 0, "message": "email 不能为空"}
 
-    # 先尽力同步该邮箱的 join_at
+    # 只同步该邮箱的 join_at（避免扫全表导致卡顿）
     try:
-        _sync_joined_leases(limit=80)
+        _sync_joined_lease_for_email(target)
     except Exception:
         pass
 
@@ -296,8 +416,24 @@ def run_transfer_for_email(email: str) -> dict:
     if not lease:
         return {"success": False, "moved": 0, "message": "租约不存在"}
 
+    if (lease.get("status") or "").strip() == "awaiting_join":
+        hint = "仍未写入 join_at（awaiting_join），不会参与到期转移；请先“同步加入时间”/点“近似加入”/或手动录入 join_at。"
+        return {"success": True, "moved": 0, "message": hint, "data": {"status": "awaiting_join"}}
+
     ok = _process_transfer_for_lease(lease, only_if_due=True)
-    return {"success": True, "moved": 1 if ok else 0, "message": ("已转移" if ok else "未到期或转移失败（请看事件/错误）")}
+    if ok:
+        return {"success": True, "moved": 1, "message": "已发送新 Team 邀请（请看事件）"}
+
+    # 更明确的提示：未到期 vs 转移失败
+    try:
+        exp = lease.get("expires_at")
+        if isinstance(exp, str) and exp:
+            exp_dt = datetime.fromisoformat(exp)
+            if exp_dt > datetime.now():
+                return {"success": True, "moved": 0, "message": f"未到期：expires_at={exp_dt.isoformat(sep=' ', timespec='seconds')}", "data": {"expires_at": exp_dt.isoformat()}}
+    except Exception:
+        pass
+    return {"success": True, "moved": 0, "message": "未转移：可能未到期或转移失败（请看事件/最后错误）"}
 
 
 def _process_transfer_for_lease(lease: dict, *, only_if_due: bool = True) -> bool:

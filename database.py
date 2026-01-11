@@ -309,6 +309,8 @@ class Database:
         join_at: datetime,
         expires_at: datetime,
         from_team: str | None = None,
+        event_action: str = "joined",
+        event_message: str | None = None,
     ):
         with self.get_connection() as conn:
             cursor = conn.cursor()
@@ -336,10 +338,10 @@ class Database:
 
         self.add_member_lease_event(
             email=email,
-            action="joined",
+            action=event_action,
             from_team=from_team,
             to_team=None,
-            message=f"检测到加入时间：{join_at.isoformat(sep=' ', timespec='seconds')}",
+            message=event_message or f"检测到加入时间：{join_at.isoformat(sep=' ', timespec='seconds')}",
         )
 
     def get_member_lease(self, email: str) -> Optional[Dict[str, Any]]:

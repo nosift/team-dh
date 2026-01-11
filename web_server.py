@@ -13,6 +13,7 @@ from database import db
 from logger import log
 import config
 import ipaddress
+from team_service import get_member_info_for_email
 from transfer_service import start_transfer_worker
 from transfer_service import run_transfer_once, sync_joined_leases_once, sync_joined_leases_once_detailed, run_transfer_for_email
 
@@ -484,6 +485,7 @@ def admin_upsert_member_lease():
         email = (payload.get("email") or "").strip().lower()
         team_name = (payload.get("team_name") or "").strip()
         join_at_raw = (payload.get("join_at") or "").strip()
+        expires_at_raw = (payload.get("expires_at") or "").strip()
 
         if not email or not team_name:
             return jsonify({"success": False, "error": "email/team_name 不能为空"}), 400
@@ -493,13 +495,34 @@ def admin_upsert_member_lease():
 
         join_at = None
         expires_at = None
+        if expires_at_raw:
+            try:
+                from date_utils import parse_datetime_loose
+
+                expires_at = parse_datetime_loose(expires_at_raw)
+            except Exception:
+                return jsonify({"success": False, "error": "expires_at 需要可解析时间，例如 2026-02-07T12:00:00 或 2026-02-07 12:00:00"}), 400
+
         if join_at_raw:
             try:
-                join_at = datetime.fromisoformat(join_at_raw.replace("Z", "+00:00")).replace(tzinfo=None)
+                from date_utils import parse_datetime_loose
+
+                join_at = parse_datetime_loose(join_at_raw)
             except Exception:
-                return jsonify({"success": False, "error": "join_at 需要 ISO 格式，例如 2026-01-07T12:00:00"}), 400
+                return jsonify({"success": False, "error": "join_at 需要可解析时间，例如 2026-01-07T12:00:00 或 2026-01-07 12:00:00"}), 400
+
             from date_utils import add_months_same_day
-            expires_at = add_months_same_day(join_at, 1)
+
+            term_months = int(os.getenv("AUTO_TRANSFER_TERM_MONTHS", "1") or 1)
+            term_months = max(1, min(24, term_months))
+            expires_at = expires_at or add_months_same_day(join_at, term_months)
+        elif expires_at:
+            # 小白模式：只填到期时间时，按“同日上个月”反推 join_at（可能不完全等价于真实加入时间）
+            from date_utils import add_months_same_day
+
+            term_months = int(os.getenv("AUTO_TRANSFER_TERM_MONTHS", "1") or 1)
+            term_months = max(1, min(24, term_months))
+            join_at = add_months_same_day(expires_at, -term_months)
 
         db.upsert_member_lease_manual(
             email=email,
@@ -508,10 +531,83 @@ def admin_upsert_member_lease():
             join_at=join_at,
             expires_at=expires_at,
         )
-        db.add_member_lease_event(email=email, action="manual_upsert", from_team=None, to_team=team_name, message="管理员手动录入/更新")
+        msg = "管理员手动录入/更新"
+        if join_at_raw == "" and expires_at_raw:
+            msg += "（仅填 expires_at，已反推 join_at）"
+        db.add_member_lease_event(email=email, action="manual_upsert", from_team=None, to_team=team_name, message=msg)
         return jsonify({"success": True, "message": "已录入"})
     except Exception as e:
         log.error(f"录入租约失败: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/admin/leases/mark-joined", methods=["POST"])
+@require_admin
+def admin_mark_member_lease_joined():
+    """手动标记某邮箱已加入（用于 members 不提供 join 时间字段的场景）。"""
+    try:
+        payload = request.get_json(silent=True) or {}
+        email = (payload.get("email") or "").strip().lower()
+        mode = (payload.get("mode") or "now").strip().lower()
+        verify = payload.get("verify", True)
+
+        if not email:
+            return jsonify({"success": False, "error": "email 不能为空"}), 400
+
+        lease = db.get_member_lease(email)
+        if not lease:
+            return jsonify({"success": False, "error": "租约不存在"}), 404
+
+        team_name = (lease.get("team_name") or "").strip()
+        team_cfg = config.resolve_team(team_name) or {}
+        if verify:
+            try:
+                mi = get_member_info_for_email(team_cfg, email) if team_cfg else {"found": False, "error": "Team 配置不存在"}
+            except Exception as e:
+                mi = {"found": False, "error": str(e)}
+            if not mi.get("found"):
+                return jsonify({"success": False, "error": f"未在成员列表确认该邮箱已加入：{mi.get('error') or 'not found'}"}), 400
+
+        join_at = None
+        join_at_raw = (payload.get("join_at") or "").strip()
+        if join_at_raw:
+            try:
+                from date_utils import parse_datetime_loose
+
+                join_at = parse_datetime_loose(join_at_raw)
+            except Exception:
+                return jsonify({"success": False, "error": "join_at 需要可解析时间，例如 2026-01-07T12:00:00"}), 400
+        else:
+            if mode == "start_at":
+                try:
+                    start_at = lease.get("start_at")
+                    if isinstance(start_at, str) and start_at:
+                        join_at = datetime.fromisoformat(start_at.replace(" ", "T", 1))
+                except Exception:
+                    join_at = None
+            join_at = join_at or datetime.now()
+
+        from date_utils import add_months_same_day
+
+        term_months = int(os.getenv("AUTO_TRANSFER_TERM_MONTHS", "1") or 1)
+        term_months = max(1, min(24, term_months))
+        expires_at = add_months_same_day(join_at, term_months)
+
+        msg = f"管理员近似写入 join_at：{join_at.isoformat(sep=' ', timespec='seconds')}（mode={mode}）"
+        if verify:
+            msg += "；已通过成员列表确认已加入"
+
+        db.update_member_lease_joined(
+            email=email,
+            join_at=join_at,
+            expires_at=expires_at,
+            from_team=team_name or None,
+            event_action="joined_fallback_manual",
+            event_message=msg,
+        )
+        return jsonify({"success": True, "message": "已写入 join_at（近似）"})
+    except Exception as e:
+        log.error(f"标记加入失败: {e}")
         return jsonify({"success": False, "error": str(e)}), 500
 
 
@@ -564,7 +660,7 @@ def admin_run_transfer_once():
         email = (payload.get("email") or "").strip().lower()
         if email:
             result = run_transfer_for_email(email)
-            return jsonify({"success": True, "message": result.get("message", ""), "data": {"moved": result.get("moved", 0)}})
+            return jsonify({"success": True, "message": result.get("message", ""), "data": {"moved": result.get("moved", 0), **(result.get("data") or {})}})
         moved = run_transfer_once(limit=limit)
         return jsonify({"success": True, "message": f"本轮转移完成: {moved} 人", "data": {"moved": moved}})
     except Exception as e:
