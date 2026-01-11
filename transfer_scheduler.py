@@ -85,7 +85,7 @@ class TransferScheduler:
             return {"success": False, "moved": 0, "message": "租约不存在"}
 
         if (lease.get("status") or "").strip() == "pending":
-            hint = "仍未写入 joined_at（pending），不会参与到期转移；请先"同步加入时间"/点"近似加入"/或手动录入 joined_at。"
+            hint = "仍未写入 joined_at（pending），不会参与到期转移；请先'同步加入时间'/点'近似加入'/或手动录入 joined_at。"
             return {"success": True, "moved": 0, "message": hint, "data": {"status": "pending"}}
 
         ok = TransferExecutor.execute(lease, only_if_due=True)
