@@ -1325,7 +1325,7 @@
                             <td>${expAt}</td>
                             <td>${count}</td>
                             <td style="display:flex; gap:8px; flex-wrap:wrap;">
-                                <button class="action-btn enable" data-action="lease-view" data-email="${safeEmailAttr}">查看</button>
+                                <button class="action-btn enable" data-action="lease-view" data-email="${safeEmailAttr}">转移记录</button>
                                 <button class="action-btn enable" data-action="lease-transfer" data-email="${safeEmailAttr}">执行转移</button>
                             </td>
                         </tr>
@@ -1349,8 +1349,15 @@
 
             try {
                 const events = await getLeaseEvents({ email: target, limit: 200, force: true });
+                const transferActions = new Set(['left_old_team', 'leave_old_failed', 'transferred', 'transfer_failed']);
+                const filtered = (events || []).filter(e => transferActions.has((e.action || '').trim()));
+
+                if (!filtered.length) {
+                    eventsTable.innerHTML = '<div class="loading">没有转移记录</div>';
+                    return;
+                }
                 let html = '<table><thead><tr><th>时间</th><th>邮箱</th><th>事件</th><th>原团队</th><th>新团队</th><th>说明</th></tr></thead><tbody>';
-                (events || []).forEach(e => {
+                filtered.forEach(e => {
                     const t = e.created_at ? new Date(e.created_at).toLocaleString() : '-';
                     const actionKey = (e.action || '').trim();
                     const actionText = escapeHtml(labelOf(LABELS.leaseAction, actionKey, actionKey || '-'));
@@ -1471,11 +1478,11 @@
                     </div>
                     <div>
                         <div style="margin-bottom:6px; font-weight:500;">join_at（可选）</div>
-                        <input id="leaseUpsertJoinAt" class="ui-input" placeholder="从何时开始计时，例如 2026-01-07 12:00:00" />
+                        <input id="leaseUpsertJoinAt" type="datetime-local" class="ui-input" />
                     </div>
                     <div>
                         <div style="margin-bottom:6px; font-weight:500;">expires_at（可选）</div>
-                        <input id="leaseUpsertExpiresAt" class="ui-input" placeholder="你希望到期时间，例如 2026-02-07 12:00:00" />
+                        <input id="leaseUpsertExpiresAt" type="datetime-local" class="ui-input" />
                     </div>
                 </div>
             `;
