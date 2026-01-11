@@ -73,13 +73,17 @@ class Database:
                 )
             """)
 
-            # 兼容旧库：补齐并发锁字段
+            # 兼容旧库：补齐并发锁字段 + 自动转移控制字段
             cursor.execute("PRAGMA table_info(redemption_codes)")
             cols = {row["name"] for row in cursor.fetchall()}
             if "locked_by" not in cols:
                 cursor.execute("ALTER TABLE redemption_codes ADD COLUMN locked_by TEXT")
             if "locked_until" not in cols:
                 cursor.execute("ALTER TABLE redemption_codes ADD COLUMN locked_until DATETIME")
+            if "auto_transfer_enabled" not in cols:
+                # 默认 1 (启用自动转移) - 保持向后兼容
+                cursor.execute("ALTER TABLE redemption_codes ADD COLUMN auto_transfer_enabled INTEGER DEFAULT 1")
+                log.info("已添加 auto_transfer_enabled 字段到 redemption_codes 表（默认启用）", icon="upgrade")
 
             # 创建兑换记录表
             cursor.execute("""
@@ -678,16 +682,17 @@ class Database:
         max_uses: int = 1,
         expires_at: Optional[datetime] = None,
         notes: Optional[str] = None,
+        auto_transfer_enabled: bool = True,
     ) -> int:
         """创建兑换码"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
                 """
-                INSERT INTO redemption_codes (code, team_name, max_uses, expires_at, notes)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO redemption_codes (code, team_name, max_uses, expires_at, notes, auto_transfer_enabled)
+                VALUES (?, ?, ?, ?, ?, ?)
             """,
-                (code, team_name, max_uses, expires_at, notes),
+                (code, team_name, max_uses, expires_at, notes, 1 if auto_transfer_enabled else 0),
             )
             return cursor.lastrowid
 

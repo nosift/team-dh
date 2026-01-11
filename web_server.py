@@ -939,6 +939,7 @@ def admin_generate_codes_for_team(index):
         max_uses = int(data.get("max_uses", 1))
         expires_days = data.get("expires_days")  # None 表示永久有效
         requested_team_name = (data.get("team_name") or "").strip()
+        auto_transfer_enabled = data.get("auto_transfer_enabled", True)  # 默认启用
 
         if count < 1 or count > 1000:
             return jsonify({"success": False, "error": "生成数量必须在 1-1000 之间"}), 400
@@ -973,12 +974,14 @@ def admin_generate_codes_for_team(index):
             team_name=team_name,
             count=count,
             max_uses=max_uses,
-            expires_days=expires_days
+            expires_days=expires_days,
+            auto_transfer_enabled=auto_transfer_enabled,
         )
 
+        transfer_info = "（启用自动转移）" if auto_transfer_enabled else "（VIP 永久使用）"
         return jsonify({
             "success": True,
-            "message": f"成功为 Team '{team_name}' 生成 {len(codes)} 个兑换码",
+            "message": f"成功为 Team '{team_name}' 生成 {len(codes)} 个兑换码{transfer_info}",
             "data": {"codes": codes, "team_name": team_name}
         })
 

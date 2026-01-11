@@ -43,6 +43,7 @@ class CodeGenerator:
         expires_days: Optional[int] = None,
         prefix: str = "TEAM",
         notes: Optional[str] = None,
+        auto_transfer_enabled: bool = True,
     ) -> List[str]:
         """
         生成兑换码 (API friendly wrapper)
@@ -54,6 +55,7 @@ class CodeGenerator:
             expires_days: 有效天数 (None表示永久有效)
             prefix: 兑换码前缀
             notes: 备注信息
+            auto_transfer_enabled: 是否启用自动转移(默认True)
 
         Returns:
             生成的兑换码列表
@@ -65,6 +67,7 @@ class CodeGenerator:
             valid_days=expires_days,
             prefix=prefix,
             notes=notes,
+            auto_transfer_enabled=auto_transfer_enabled,
         )
 
     @staticmethod
@@ -75,6 +78,7 @@ class CodeGenerator:
         valid_days: Optional[int] = None,
         prefix: str = "TEAM",
         notes: Optional[str] = None,
+        auto_transfer_enabled: bool = True,
     ) -> List[str]:
         """
         批量生成兑换码并保存到数据库
@@ -86,6 +90,7 @@ class CodeGenerator:
             valid_days: 有效天数 (None表示永久有效)
             prefix: 兑换码前缀
             notes: 备注信息
+            auto_transfer_enabled: 是否启用自动转移(默认True)
 
         Returns:
             生成的兑换码列表
@@ -114,6 +119,7 @@ class CodeGenerator:
                     max_uses=max_uses,
                     expires_at=expires_at,
                     notes=notes,
+                    auto_transfer_enabled=auto_transfer_enabled,
                 )
                 codes.append(code)
                 log.progress_inline(f"已生成: {i + 1}/{count}")

@@ -494,6 +494,83 @@ POST /api/admin/leases/sync-joined
 
 ---
 
+## 权限控制
+
+### 谁会获得自动转移权限?
+
+**默认行为:** 兑换码的 `auto_transfer_enabled` 字段控制是否为用户创建租约。
+
+| 字段值 | 行为 | 适用场景 |
+|--------|------|---------|
+| `1` (默认) | 创建租约,参与自动转移 | 普通用户,按月轮换 |
+| `0` | 不创建租约,永久使用 | VIP 用户,特殊权限 |
+
+### 权限控制层级
+
+系统有 **3 层权限控制**:
+
+#### 1. 全局开关 (环境变量)
+```bash
+AUTO_TRANSFER_ENABLED=true   # 启用/关闭整个自动转移功能
+```
+- ✅ 影响范围: 所有租约
+- ⚠️ 关闭后,所有租约都不会自动转移
+
+#### 2. 兑换码级别控制 (数据库字段)
+```sql
+-- 创建支持自动转移的兑换码(默认)
+INSERT INTO redemption_codes (code, team_name, auto_transfer_enabled)
+VALUES ('NORMAL123', 'Team A', 1);
+
+-- 创建不支持自动转移的兑换码(VIP 用户)
+INSERT INTO redemption_codes (code, team_name, auto_transfer_enabled)
+VALUES ('VIP456', 'Team A', 0);
+```
+- ✅ 影响范围: 该兑换码的所有用户
+- ✅ 适用场景: 区分普通用户和 VIP 用户
+
+#### 3. 用户级别控制 (删除租约)
+```bash
+# 手动删除某个用户的租约(永久退出自动转移)
+POST /api/admin/leases/delete
+{"email": "user@example.com"}
+```
+- ✅ 影响范围: 单个用户
+- ✅ 适用场景: 用户主动退出自动转移
+
+### 如何创建不同类型的兑换码?
+
+**Web 界面创建兑换码时:**
+- 添加 "启用自动转移" 选项(默认勾选)
+- 取消勾选 = VIP 用户,永久使用
+
+**API 创建兑换码时:**
+```bash
+# 普通用户兑换码(默认)
+POST /api/admin/codes/create
+{
+  "code": "NORMAL123",
+  "team_name": "Team A",
+  "auto_transfer_enabled": true
+}
+
+# VIP 用户兑换码(永久使用)
+POST /api/admin/codes/create
+{
+  "code": "VIP456",
+  "team_name": "Team A",
+  "auto_transfer_enabled": false
+}
+```
+
+### 兼容性说明
+
+- ✅ **旧数据兼容**: 已存在的兑换码默认 `auto_transfer_enabled=1`
+- ✅ **旧租约不受影响**: 已创建的租约继续正常转移
+- ✅ **向后兼容**: 不指定该字段时,默认启用自动转移
+
+---
+
 ## 总结
 
 ### 核心原则

@@ -113,32 +113,39 @@ class RedemptionService:
                 RedemptionService._update_team_stats(team_name)
 
                 # 11. 记录"成员租约"（用于按月到期自动转移到新 Team）
+                # 只为启用了 auto_transfer 的兑换码创建租约
                 try:
-                    now = datetime.now()
-                    team_cfg = config.resolve_team(team_name) or {}
-                    team_account_id = team_cfg.get("account_id")
-                    term_months = int(os.getenv("AUTO_TRANSFER_TERM_MONTHS", "1") or 1)
-                    expires_at = add_months_same_day(now, max(1, min(24, term_months)))
+                    code_info = db.get_code_by_value(code)
+                    auto_transfer_enabled = code_info.get("auto_transfer_enabled", 1) if code_info else 1
 
-                    existed = db.get_member_lease(email) is not None
-                    # 新模型: created_at=兑换时间, invited_at=发送邀请时间, joined_at=NULL (等待同步)
-                    db.upsert_member_lease(
-                        email=email,
-                        team_name=team_name,
-                        team_account_id=team_account_id,
-                        created_at=now,
-                        invited_at=now,
-                        expires_at=expires_at,
-                        status="pending",
-                    )
-                    if not existed:
-                        db.add_member_lease_event(
+                    if auto_transfer_enabled:
+                        now = datetime.now()
+                        team_cfg = config.resolve_team(team_name) or {}
+                        team_account_id = team_cfg.get("account_id")
+                        term_months = int(os.getenv("AUTO_TRANSFER_TERM_MONTHS", "1") or 1)
+                        expires_at = add_months_same_day(now, max(1, min(24, term_months)))
+
+                        existed = db.get_member_lease(email) is not None
+                        # 新模型: created_at=兑换时间, invited_at=发送邀请时间, joined_at=NULL (等待同步)
+                        db.upsert_member_lease(
                             email=email,
-                            action="created",
-                            from_team=None,
-                            to_team=team_name,
-                            message=f"创建租约：到期 {expires_at.date().isoformat()}（实际到期日将以 joined_at 为准）",
+                            team_name=team_name,
+                            team_account_id=team_account_id,
+                            created_at=now,
+                            invited_at=now,
+                            expires_at=expires_at,
+                            status="pending",
                         )
+                        if not existed:
+                            db.add_member_lease_event(
+                                email=email,
+                                action="created",
+                                from_team=None,
+                                to_team=team_name,
+                                message=f"创建租约：到期 {expires_at.date().isoformat()}（实际到期日将以 joined_at 为准）",
+                            )
+                    else:
+                        log.info(f"兑换码 {code} 的 auto_transfer_enabled=0，跳过创建租约", icon="info")
                 except Exception as e:
                     log.warning(f"写入成员租约失败（不影响兑换流程）: {e}")
 
