@@ -112,7 +112,7 @@ class RedemptionService:
                 # 10. 更新Team统计
                 RedemptionService._update_team_stats(team_name)
 
-                # 11. 记录“成员租约”（用于按月到期自动转移到新 Team）
+                # 11. 记录"成员租约"（用于按月到期自动转移到新 Team）
                 try:
                     now = datetime.now()
                     team_cfg = config.resolve_team(team_name) or {}
@@ -121,15 +121,15 @@ class RedemptionService:
                     expires_at = add_months_same_day(now, max(1, min(24, term_months)))
 
                     existed = db.get_member_lease(email) is not None
-                    # 先记录为 awaiting_join；真实到期起点以“用户接受邀请加入 Team 的时间”为准，
-                    # 后台会通过 invites 状态同步 join_at，并据此修正 expires_at。
+                    # 新模型: created_at=兑换时间, invited_at=发送邀请时间, joined_at=NULL (等待同步)
                     db.upsert_member_lease(
                         email=email,
                         team_name=team_name,
                         team_account_id=team_account_id,
-                        start_at=now,
+                        created_at=now,
+                        invited_at=now,
                         expires_at=expires_at,
-                        status="awaiting_join",
+                        status="pending",
                     )
                     if not existed:
                         db.add_member_lease_event(
@@ -137,7 +137,7 @@ class RedemptionService:
                             action="created",
                             from_team=None,
                             to_team=team_name,
-                            message=f"创建租约：到期 {expires_at.date().isoformat()}",
+                            message=f"创建租约：到期 {expires_at.date().isoformat()}（实际到期日将以 joined_at 为准）",
                         )
                 except Exception as e:
                     log.warning(f"写入成员租约失败（不影响兑换流程）: {e}")

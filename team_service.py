@@ -6,7 +6,6 @@ from __future__ import annotations
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
-from time import time
 
 from config import (
     TEAMS,
@@ -35,9 +34,8 @@ def create_session_with_retry():
 http_session = create_session_with_retry()
 
 
-_CACHE_TTL_SECONDS = 12
-_invites_cache: dict[str, tuple[float, list]] = {}
-_members_cache: dict[str, tuple[float, list]] = {}
+# 缓存已移除: 之前的 12 秒 TTL 缓存在并发场景下会导致数据不一致
+# 转移操作需要实时准确的数据,不适合缓存
 
 
 def _is_pending_invite(invite: dict) -> bool:
@@ -264,12 +262,6 @@ def get_pending_invites(team: dict, *, max_items: int = 500) -> list:
     Returns:
         list: 待处理邀请列表
     """
-    cache_key = team.get("account_id") or team.get("name") or ""
-    if cache_key:
-        cached = _invites_cache.get(cache_key)
-        if cached and (time() - cached[0]) < _CACHE_TTL_SECONDS:
-            return cached[1]
-
     headers = build_invite_headers(team)
 
     pending: list = []
@@ -305,20 +297,11 @@ def get_pending_invites(team: dict, *, max_items: int = 500) -> list:
     except Exception as e:
         log.warning(f"获取待处理邀请异常: {e}")
 
-    if cache_key:
-        _invites_cache[cache_key] = (time(), pending)
-
     return pending
 
 
 def get_all_invites_debug(team: dict, *, max_items: int = 500) -> tuple[list, str | None]:
     """获取 Team 的邀请列表（包含已接受/已结束），并返回可读错误信息（如有）。"""
-    cache_key = team.get("account_id") or team.get("name") or ""
-    if cache_key:
-        cached = _invites_cache.get(cache_key)
-        if cached and (time() - cached[0]) < _CACHE_TTL_SECONDS:
-            return cached[1], None
-
     headers = build_invite_headers(team)
 
     items_all: list = []
@@ -363,9 +346,6 @@ def get_all_invites_debug(team: dict, *, max_items: int = 500) -> tuple[list, st
     except Exception as e:
         last_err = str(e)
         log.warning(f"获取邀请列表异常: {e}")
-
-    if cache_key:
-        _invites_cache[cache_key] = (time(), items_all)
 
     return items_all[:max_items], last_err
 
@@ -422,12 +402,6 @@ def get_team_members_debug(team: dict, *, max_items: int = 500) -> tuple[list, s
 
     注意：ChatGPT 后端接口可能会变更；此函数尽量兼容不同返回结构。
     """
-    cache_key = team.get("account_id") or team.get("name") or ""
-    if cache_key:
-        cached = _members_cache.get(cache_key)
-        if cached and (time() - cached[0]) < _CACHE_TTL_SECONDS:
-            return cached[1], None
-
     headers = build_invite_headers(team)
     items_all: list = []
     offset = 0
@@ -492,9 +466,6 @@ def get_team_members_debug(team: dict, *, max_items: int = 500) -> tuple[list, s
     except Exception as e:
         last_err = str(e)
         log.warning(f"获取成员列表异常: {e}")
-
-    if cache_key:
-        _members_cache[cache_key] = (time(), items_all)
 
     return items_all[:max_items], last_err
 

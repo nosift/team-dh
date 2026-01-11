@@ -109,17 +109,18 @@ class Database:
                 )
             """)
 
-            # 成员租约：用于“按月到期自动转移到新 Team”
+            # 成员租约：用于"按月到期自动转移到新 Team"
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS member_leases (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     email VARCHAR(255) UNIQUE NOT NULL,
                     team_name VARCHAR(100) NOT NULL,
                     team_account_id VARCHAR(128),
-                    start_at DATETIME NOT NULL,
-                    join_at DATETIME,
+                    created_at DATETIME NOT NULL,
+                    invited_at DATETIME NOT NULL,
+                    joined_at DATETIME,
                     expires_at DATETIME NOT NULL,
-                    status VARCHAR(32) DEFAULT 'active',
+                    status VARCHAR(32) DEFAULT 'pending',
                     transfer_count INTEGER DEFAULT 0,
                     attempts INTEGER DEFAULT 0,
                     next_attempt_at DATETIME,
@@ -150,13 +151,36 @@ class Database:
                 )
             """)
 
-            # 兼容旧库：补齐 member_leases 新字段
+            # 兼容旧库：补齐 member_leases 新字段 + 迁移旧数据
             cursor.execute("PRAGMA table_info(member_leases)")
             lease_cols = {row["name"] for row in cursor.fetchall()}
-            if "join_at" not in lease_cols:
-                cursor.execute("ALTER TABLE member_leases ADD COLUMN join_at DATETIME")
+
+            # 迁移：将旧字段 start_at/join_at 改名为 created_at/joined_at
+            if "start_at" in lease_cols and "created_at" not in lease_cols:
+                cursor.execute("ALTER TABLE member_leases RENAME COLUMN start_at TO created_at")
+            if "join_at" in lease_cols and "joined_at" not in lease_cols:
+                cursor.execute("ALTER TABLE member_leases RENAME COLUMN join_at TO joined_at")
+
+            # 刷新字段列表
+            cursor.execute("PRAGMA table_info(member_leases)")
+            lease_cols = {row["name"] for row in cursor.fetchall()}
+
+            # 添加新字段
+            if "created_at" not in lease_cols:
+                cursor.execute("ALTER TABLE member_leases ADD COLUMN created_at DATETIME")
+            if "invited_at" not in lease_cols:
+                # 对于旧数据,用 created_at 作为 invited_at 的默认值
+                cursor.execute("ALTER TABLE member_leases ADD COLUMN invited_at DATETIME")
+                cursor.execute("UPDATE member_leases SET invited_at = created_at WHERE invited_at IS NULL")
+            if "joined_at" not in lease_cols:
+                cursor.execute("ALTER TABLE member_leases ADD COLUMN joined_at DATETIME")
             if "last_synced_at" not in lease_cols:
                 cursor.execute("ALTER TABLE member_leases ADD COLUMN last_synced_at DATETIME")
+
+            # 状态迁移：awaiting_join → pending, active → active
+            cursor.execute("UPDATE member_leases SET status = 'pending' WHERE status = 'awaiting_join'")
+            cursor.execute("UPDATE member_leases SET status = 'failed' WHERE status = 'awaiting_transfer'")
+
 
             # 创建索引
             cursor.execute("""
@@ -220,20 +244,30 @@ class Database:
         email: str,
         team_name: str,
         team_account_id: str | None,
-        start_at: datetime,
+        created_at: datetime,
+        invited_at: datetime,
         expires_at: datetime,
-        status: str = "awaiting_join",
+        status: str = "pending",
     ):
+        """创建或更新租约
+
+        新模型:
+        - created_at: 租约创建时间(兑换时间)
+        - invited_at: 发送邀请时间
+        - joined_at: 用户接受邀请时间(初始为 NULL)
+        - expires_at: 到期时间(初始预估,实际以 joined_at + term_months 为准)
+        """
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
                 """
-                INSERT INTO member_leases (email, team_name, team_account_id, start_at, expires_at, status, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                INSERT INTO member_leases (email, team_name, team_account_id, created_at, invited_at, expires_at, status, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                 ON CONFLICT(email) DO UPDATE SET
                     team_name = excluded.team_name,
                     team_account_id = excluded.team_account_id,
-                    start_at = excluded.start_at,
+                    created_at = excluded.created_at,
+                    invited_at = excluded.invited_at,
                     expires_at = excluded.expires_at,
                     status = excluded.status,
                     updated_at = CURRENT_TIMESTAMP
@@ -242,7 +276,8 @@ class Database:
                     email,
                     team_name,
                     team_account_id,
-                    start_at.isoformat(sep=" ", timespec="seconds"),
+                    created_at.isoformat(sep=" ", timespec="seconds"),
+                    invited_at.isoformat(sep=" ", timespec="seconds"),
                     expires_at.isoformat(sep=" ", timespec="seconds"),
                     status,
                 ),
@@ -268,6 +303,7 @@ class Database:
             )
 
     def list_due_member_leases(self, *, limit: int = 20) -> List[Dict[str, Any]]:
+        """获取已到期的租约(只包含 active 状态且 joined_at 不为 NULL 的)"""
         now = datetime.now().isoformat(sep=" ", timespec="seconds")
         with self.get_connection() as conn:
             cursor = conn.cursor()
@@ -275,9 +311,10 @@ class Database:
                 """
                 SELECT *
                 FROM member_leases
-                WHERE expires_at <= ?
+                WHERE status = 'active'
+                  AND joined_at IS NOT NULL
+                  AND expires_at <= ?
                   AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
-                  AND status IN ('active', 'awaiting_transfer')
                 ORDER BY expires_at ASC
                 LIMIT ?
             """,
@@ -285,10 +322,12 @@ class Database:
             )
             return [dict(row) for row in cursor.fetchall()]
 
-    def list_member_leases_awaiting_join(self, *, limit: int = 50) -> List[Dict[str, Any]]:
-        return self.list_member_leases_awaiting_join_with_due(limit=limit, include_not_due=False)
+    def list_member_leases_pending_join(self, *, limit: int = 50) -> List[Dict[str, Any]]:
+        """获取等待用户接受邀请的租约(status=pending 且 joined_at 为 NULL)"""
+        return self.list_member_leases_pending_join_with_due(limit=limit, include_not_due=False)
 
-    def list_member_leases_awaiting_join_with_due(self, *, limit: int = 50, include_not_due: bool = False) -> List[Dict[str, Any]]:
+    def list_member_leases_pending_join_with_due(self, *, limit: int = 50, include_not_due: bool = False) -> List[Dict[str, Any]]:
+        """获取等待同步的租约"""
         now = datetime.now().isoformat(sep=" ", timespec="seconds")
         with self.get_connection() as conn:
             cursor = conn.cursor()
@@ -297,7 +336,8 @@ class Database:
                     """
                     SELECT *
                     FROM member_leases
-                    WHERE status = 'awaiting_join'
+                    WHERE status = 'pending'
+                      AND joined_at IS NULL
                     ORDER BY updated_at DESC
                     LIMIT ?
                 """,
@@ -308,7 +348,8 @@ class Database:
                     """
                     SELECT *
                     FROM member_leases
-                    WHERE status = 'awaiting_join'
+                    WHERE status = 'pending'
+                      AND joined_at IS NULL
                       AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
                     ORDER BY updated_at DESC
                     LIMIT ?
@@ -318,6 +359,7 @@ class Database:
             return [dict(row) for row in cursor.fetchall()]
 
     def defer_member_lease_join_sync(self, *, email: str, next_attempt_at: datetime, last_error: str | None = None) -> bool:
+        """延迟下次同步尝试(用于 pending 状态)"""
         email = (email or "").strip().lower()
         if not email:
             return False
@@ -331,7 +373,7 @@ class Database:
                     last_synced_at = CURRENT_TIMESTAMP,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE email = ?
-                  AND status = 'awaiting_join'
+                  AND status = 'pending'
             """,
                 (
                     next_attempt_at.isoformat(sep=" ", timespec="seconds"),
@@ -345,19 +387,22 @@ class Database:
         self,
         *,
         email: str,
-        join_at: datetime,
+        joined_at: datetime,
         expires_at: datetime,
         from_team: str | None = None,
         event_action: str = "joined",
         event_message: str | None = None,
     ):
+        """更新租约为已加入状态
+
+        注意: 现在只更新 joined_at 和 expires_at, 不再覆盖 created_at
+        """
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
                 """
                 UPDATE member_leases
-                SET join_at = ?,
-                    start_at = ?,
+                SET joined_at = ?,
                     expires_at = ?,
                     status = 'active',
                     attempts = 0,
@@ -368,8 +413,7 @@ class Database:
                 WHERE email = ?
             """,
                 (
-                    join_at.isoformat(sep=" ", timespec="seconds"),
-                    join_at.isoformat(sep=" ", timespec="seconds"),
+                    joined_at.isoformat(sep=" ", timespec="seconds"),
                     expires_at.isoformat(sep=" ", timespec="seconds"),
                     email,
                 ),
@@ -380,7 +424,7 @@ class Database:
             action=event_action,
             from_team=from_team,
             to_team=None,
-            message=event_message or f"检测到加入时间：{join_at.isoformat(sep=' ', timespec='seconds')}",
+            message=event_message or f"检测到加入时间：{joined_at.isoformat(sep=' ', timespec='seconds')}",
         )
 
     def get_member_lease(self, email: str) -> Optional[Dict[str, Any]]:
@@ -394,6 +438,7 @@ class Database:
             return dict(row) if row else None
 
     def mark_member_lease_transferring(self, email: str) -> bool:
+        """标记租约为转移中状态"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
@@ -401,7 +446,7 @@ class Database:
                 UPDATE member_leases
                 SET status = 'transferring', updated_at = CURRENT_TIMESTAMP
                 WHERE email = ?
-                  AND status IN ('active', 'awaiting_transfer')
+                  AND status = 'active'
             """,
                 (email,),
             )
@@ -413,9 +458,10 @@ class Database:
         email: str,
         new_team_name: str,
         new_team_account_id: str | None,
-        start_at: datetime,
+        invited_at: datetime,
         expires_at: datetime,
     ):
+        """转移成功: 更新为新 Team, 重置为 pending 状态"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
@@ -423,10 +469,10 @@ class Database:
                 UPDATE member_leases
                 SET team_name = ?,
                     team_account_id = ?,
-                    start_at = ?,
-                    join_at = NULL,
+                    invited_at = ?,
+                    joined_at = NULL,
                     expires_at = ?,
-                    status = 'awaiting_join',
+                    status = 'pending',
                     transfer_count = transfer_count + 1,
                     attempts = 0,
                     next_attempt_at = NULL,
@@ -438,7 +484,7 @@ class Database:
                 (
                     new_team_name,
                     new_team_account_id,
-                    start_at.isoformat(sep=" ", timespec="seconds"),
+                    invited_at.isoformat(sep=" ", timespec="seconds"),
                     expires_at.isoformat(sep=" ", timespec="seconds"),
                     email,
                 ),
@@ -451,12 +497,13 @@ class Database:
         message: str,
         next_attempt_at: datetime,
     ):
+        """转移失败: 标记为 failed 状态, 记录重试时间"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
                 """
                 UPDATE member_leases
-                SET status = 'awaiting_transfer',
+                SET status = 'failed',
                     attempts = attempts + 1,
                     next_attempt_at = ?,
                     last_error = ?,

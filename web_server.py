@@ -14,8 +14,8 @@ from logger import log
 import config
 import ipaddress
 from team_service import get_member_info_for_email
-from transfer_service import start_transfer_worker
-from transfer_service import run_transfer_once, sync_joined_leases_once, sync_joined_leases_once_detailed, run_transfer_for_email, sync_joined_lease_for_email_once_detailed
+from transfer_scheduler import start_transfer_worker
+from transfer_scheduler import run_transfer_once, sync_joined_leases_once, sync_joined_leases_once_detailed, run_transfer_for_email, sync_joined_lease_for_email_once_detailed
 
 
 app = Flask(__name__)
