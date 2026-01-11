@@ -524,11 +524,11 @@
                         <span class="filter-label">邮箱</span>
                         <input id="leaseEmailFilter" class="ui-input" style="width: 280px; max-width: 70vw;" placeholder="输入邮箱（可选，用于查看事件/单邮箱同步）" />
                     </div>
-                    <div class="filter-right">
-                        <button class="refresh-btn" onclick="openLeaseUpsert()">录入邮箱</button>
-                        <button class="refresh-btn" onclick="syncJoinTimes()">同步加入时间</button>
-                        <button class="refresh-btn" onclick="runTransferOnce()">执行一次转移</button>
-                        <button class="refresh-btn" onclick="loadLeases({ force: true })">刷新</button>
+                <div class="filter-right">
+                        <button class="refresh-btn" onclick="openLeaseUpsert()" title="把某个邮箱纳入“到期转移”体系，并设置到期时间">录入邮箱</button>
+                        <button class="refresh-btn" onclick="syncJoinTimes()" title="尝试从邀请/成员信息补齐“开始计时”（仅在系统能确认已加入时有效）">自动补开始计时</button>
+                        <button class="refresh-btn" onclick="runTransferOnce()" title="手动触发一次到期检查：只会对“已到期”的邮箱尝试转移">执行一次转移</button>
+                        <button class="refresh-btn" onclick="loadLeases({ force: true })" title="刷新列表">刷新</button>
                     </div>
                 </div>
 
@@ -1325,8 +1325,8 @@
                             <td>${expAt}</td>
                             <td>${count}</td>
                             <td style="display:flex; gap:8px; flex-wrap:wrap;">
-                                <button class="action-btn enable" data-action="lease-view" data-email="${safeEmailAttr}">转移记录</button>
-                                <button class="action-btn enable" data-action="lease-transfer" data-email="${safeEmailAttr}">执行转移</button>
+                                <button class="action-btn enable" data-action="lease-view" data-email="${safeEmailAttr}" title="只查看该邮箱的“转移相关记录”">转移记录</button>
+                                <button class="action-btn enable" data-action="lease-transfer" data-email="${safeEmailAttr}" title="对该邮箱执行一次到期检查：仅到期才会尝试转移">执行转移</button>
                             </td>
                         </tr>
                     `;
@@ -1394,10 +1394,10 @@
         async function syncJoinTimes() {
             const email = (document.getElementById('leaseEmailFilter')?.value || '').trim().toLowerCase();
             const msg = email
-                ? `将只同步该邮箱的 join_at（以邀请 accepted/completed 时间为准）。\n\n邮箱: ${email}\n\n继续？`
-                : '将同步 awaiting_join 的 join_at（以邀请 accepted/completed 时间为准）。\n\n继续？';
+                ? `将尝试为该邮箱“自动补开始计时”。\n\n说明：仅当系统能确认该邮箱已加入（例如邀请已 accepted/completed）时，才能补上。\n\n邮箱: ${email}\n\n继续？`
+                : '将为 awaiting_join 的邮箱“自动补开始计时”。\n\n说明：仅当系统能确认已加入（例如邀请已 accepted/completed）时，才能补上。\n\n继续？';
 
-            const ok = await uiConfirm(msg, { title: '同步加入时间' });
+            const ok = await uiConfirm(msg, { title: '自动补开始计时' });
             if (!ok) return;
 
             try {
@@ -1476,7 +1476,11 @@
             const bodyHtml = `
                 <div style="display:flex; flex-direction:column; gap:10px;">
                     <div style="font-size:13px; color:#86868b; line-height:1.5;">
-                        录入后该邮箱会纳入“到期转移”体系。推荐填 join_at（从何时开始计时）。更小白的话：只填 expires_at（你希望它哪天到期），系统会自动反推 join_at。
+                        录入后该邮箱会纳入“到期转移”体系。你只需要填一个时间即可：
+                        <div style="margin-top:6px; display:flex; flex-direction:column; gap:4px;">
+                            <div>1）只填「到期时间」：你希望它哪天到期（系统会自动反推“开始计时”）</div>
+                            <div>2）填「开始计时」：从哪天开始算周期（系统会自动算到期时间）</div>
+                        </div>
                     </div>
                     <div>
                         <div style="margin-bottom:6px; font-weight:500;">邮箱</div>
@@ -1487,12 +1491,14 @@
                         <select id="leaseUpsertTeam" class="ui-input">${options}</select>
                     </div>
                     <div>
-                        <div style="margin-bottom:6px; font-weight:500;">join_at（可选）</div>
+                        <div style="margin-bottom:6px; font-weight:500;">开始计时（可选）</div>
                         <input id="leaseUpsertJoinAt" type="datetime-local" class="ui-input" />
+                        <div style="margin-top:6px; font-size:12px; color:#86868b;">含义：从这个时间点开始算一个周期（例如 1 个月）。</div>
                     </div>
                     <div>
-                        <div style="margin-bottom:6px; font-weight:500;">expires_at（可选）</div>
+                        <div style="margin-bottom:6px; font-weight:500;">到期时间（可选）</div>
                         <input id="leaseUpsertExpiresAt" type="datetime-local" class="ui-input" />
+                        <div style="margin-top:6px; font-size:12px; color:#86868b;">含义：你希望它到期的时间点（只填这个最省心）。</div>
                     </div>
                 </div>
             `;
