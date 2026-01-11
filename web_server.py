@@ -362,23 +362,13 @@ def admin_stats():
             row = stats_by_index.get(idx) or {}
             team_name = team.get("name")
 
-            # 查询该 Team 的第一个兑换码创建时间作为"添加时间"
-            first_code_time = None
-            try:
-                with db.get_connection() as conn:
-                    cursor = conn.cursor()
-                    cursor.execute(
-                        "SELECT MIN(created_at) as first_time FROM redemption_codes WHERE team_name = ?",
-                        (team_name,)
-                    )
-                    result = cursor.fetchone()
-                    if result and result["first_time"]:
-                        first_code_time = result["first_time"]
-                        # 格式化为 ISO
-                        if isinstance(first_code_time, str) and " " in first_code_time and "T" not in first_code_time:
-                            first_code_time = first_code_time.replace(" ", "T", 1)
-            except Exception as e:
-                log.warning(f"查询 Team {team_name} 创建时间失败: {e}")
+            last_updated = row.get("last_updated")
+            # teams_stats.last_updated 来自 SQLite CURRENT_TIMESTAMP（UTC）
+            if isinstance(last_updated, str) and last_updated:
+                if " " in last_updated and "T" not in last_updated:
+                    last_updated = last_updated.replace(" ", "T", 1)
+                if not (last_updated.endswith("Z") or "+" in last_updated or "-" in last_updated[10:]):
+                    last_updated = last_updated + "Z"
 
             team_stats.append(
                 {
@@ -388,7 +378,8 @@ def admin_stats():
                     "used_seats": row.get("used_seats", 0),
                     "pending_invites": row.get("pending_invites", 0),
                     "available_seats": row.get("available_seats", 0),
-                    "添加时间": first_code_time,  # 第一个兑换码创建时间
+                    "created_at": team.get("created_at"),
+                    "last_updated": last_updated,
                 }
             )
 

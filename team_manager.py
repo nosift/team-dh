@@ -6,6 +6,7 @@ Team 管理服务
 import json
 from pathlib import Path
 from typing import List, Dict, Any, Optional
+from datetime import datetime
 from logger import log
 import config
 
@@ -62,6 +63,11 @@ class TeamManager:
         result = []
         for idx, team in enumerate(teams):
             team_name = team_names[idx] if idx < len(team_names) else f"Team{idx+1}"
+            created_at = (
+                team.get("created_at")
+                or team.get("createdAt")
+                or None
+            )
             result.append({
                 "index": idx,
                 "name": team_name,
@@ -69,7 +75,8 @@ class TeamManager:
                 "user_id": team.get("user", {}).get("id", ""),
                 "account_id": team.get("account", {}).get("id", ""),
                 "org_id": team.get("account", {}).get("organizationId", ""),
-                "has_token": bool(team.get("accessToken"))
+                "has_token": bool(team.get("accessToken")),
+                "created_at": created_at,
             })
 
         return result
@@ -88,7 +95,9 @@ class TeamManager:
                 "id": account_id,
                 "organizationId": org_id
             },
-            "accessToken": access_token
+            "accessToken": access_token,
+            # 用于 UI 显示“添加时间”
+            "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
         }
 
         teams.append(new_team)
