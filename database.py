@@ -39,7 +39,7 @@ class Database:
     @contextmanager
     def get_connection(self):
         """获取数据库连接的上下文管理器"""
-        conn = sqlite3.connect(self.db_file)
+        conn = sqlite3.connect(self.db_file, timeout=30.0)  # 增加超时到30秒
         conn.row_factory = sqlite3.Row  # 允许通过列名访问
         try:
             yield conn
