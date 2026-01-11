@@ -360,13 +360,6 @@ def admin_stats():
             if not isinstance(idx, int):
                 continue
             row = stats_by_index.get(idx) or {}
-            last_updated = row.get("last_updated")
-            # teams_stats.last_updated 来自 SQLite CURRENT_TIMESTAMP（UTC）
-            if isinstance(last_updated, str) and last_updated:
-                if " " in last_updated and "T" not in last_updated:
-                    last_updated = last_updated.replace(" ", "T", 1)
-                if not (last_updated.endswith("Z") or "+" in last_updated or "-" in last_updated[10:]):
-                    last_updated = last_updated + "Z"
             team_stats.append(
                 {
                     "team_name": team.get("name"),
@@ -375,7 +368,6 @@ def admin_stats():
                     "used_seats": row.get("used_seats", 0),
                     "pending_invites": row.get("pending_invites", 0),
                     "available_seats": row.get("available_seats", 0),
-                    "last_updated": last_updated,
                 }
             )
 
