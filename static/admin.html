@@ -1416,10 +1416,15 @@
         }
 
         async function runTransferOnce() {
+            const teams = await getTeams({ force: false });
+            if (!teams || teams.length < 2) {
+                showToast('请先在「Team管理」至少配置 2 个 Team（否则无法转移到新 Team）', 'danger', 2600);
+                return;
+            }
             const email = (document.getElementById('leaseEmailFilter')?.value || '').trim().toLowerCase();
             const msg = email
-                ? `将对该邮箱执行一次到期转移（仅到期才会真正转移）。\n\n邮箱: ${email}\n\n继续？`
-                : '将执行一轮到期转移（可能会触发自动退出旧 Team + 发送新 Team 邀请）。\n\n继续？';
+                ? `将尝试对该邮箱执行一次到期转移。\n\n仅当该邮箱已到期，且你已配置至少 2 个 Team 时，才会真的发送新 Team 邀请（自动退出旧 Team 需服务端配置）。\n\n邮箱: ${email}\n\n继续？`
+                : '将尝试执行一轮到期转移。\n\n仅对“已到期”的邮箱生效，且需要至少 2 个 Team 才能转移到新 Team（自动退出旧 Team 需服务端配置）。\n\n继续？';
 
             const ok = await uiConfirm(msg, { title: '执行转移' });
             if (!ok) return;
@@ -1441,6 +1446,11 @@
         }
 
         async function runTransferForEmail(email) {
+            const teams = await getTeams({ force: false });
+            if (!teams || teams.length < 2) {
+                showToast('请先在「Team管理」至少配置 2 个 Team（否则无法转移到新 Team）', 'danger', 2600);
+                return;
+            }
             const ok = await uiConfirm(`将对该邮箱执行一次“到期转移”（仅在到期时会真正转移）。\\n\\n邮箱: ${email}`, { title: '执行转移' });
             if (!ok) return;
             try {
