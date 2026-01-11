@@ -437,6 +437,32 @@ class Database:
             row = cursor.fetchone()
             return dict(row) if row else None
 
+    def delete_member_lease(self, email: str) -> bool:
+        """删除租约记录
+
+        Args:
+            email: 邮箱地址
+
+        Returns:
+            bool: 是否删除成功
+        """
+        email = (email or "").strip().lower()
+        if not email:
+            return False
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM member_leases WHERE email = ?", (email,))
+            # 同时添加删除事件
+            if cursor.rowcount > 0:
+                self.add_member_lease_event(
+                    email=email,
+                    action="deleted",
+                    from_team=None,
+                    to_team=None,
+                    message="租约已被手动删除"
+                )
+            return cursor.rowcount > 0
+
     def mark_member_lease_transferring(self, email: str) -> bool:
         """标记租约为转移中状态"""
         with self.get_connection() as conn:

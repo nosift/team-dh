@@ -117,3 +117,4 @@ class LeaseAction(str, Enum):
     TRANSFERRED = 'transferred'            # 转移成功
     TRANSFER_FAILED = 'transfer_failed'    # 转移失败
     CANCELLED = 'cancelled'                # 取消租约
+    DELETED = 'deleted'                    # 删除租约

@@ -1092,3 +1092,28 @@ if __name__ == "__main__":
     debug = config.get("web.debug", False)
 
     run_server(host=host, port=port, debug=debug)
+
+
+@app.route("/api/admin/leases/delete", methods=["POST"])
+@require_admin
+def admin_delete_lease():
+    """删除租约记录（用于误添加的邮箱）"""
+    try:
+        payload = request.get_json(silent=True) or {}
+        email = (payload.get("email") or "").strip().lower()
+        if not email:
+            return jsonify({"success": False, "error": "email 不能为空"}), 400
+
+        # 先检查租约是否存在
+        lease = db.get_member_lease(email)
+        if not lease:
+            return jsonify({"success": False, "error": "租约不存在"}), 404
+
+        # 删除租约
+        if db.delete_member_lease(email):
+            return jsonify({"success": True, "message": f"已删除 {email} 的租约"})
+        else:
+            return jsonify({"success": False, "error": "删除失败"}), 500
+    except Exception as e:
+        log.error(f"删除租约失败: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
