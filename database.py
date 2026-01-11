@@ -638,6 +638,19 @@ class Database:
                 ),
             )
 
+    def delete_member_lease(self, *, email: str, delete_events: bool = True) -> bool:
+        """删除某邮箱的租约（可选同时删除其事件记录）。"""
+        email = (email or "").strip().lower()
+        if not email:
+            return False
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM member_leases WHERE email = ?", (email,))
+            ok = cursor.rowcount == 1
+            if delete_events:
+                cursor.execute("DELETE FROM member_lease_events WHERE email = ?", (email,))
+        return ok
+
     def force_expire_member_lease(self, *, email: str):
         """测试用：将租约标记为立即到期（使其进入到期转移队列）。"""
         email = (email or "").strip().lower()
