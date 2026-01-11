@@ -522,7 +522,7 @@
                 <div class="filter-bar">
                     <div class="filter-left">
                         <span class="filter-label">邮箱</span>
-                        <input id="leaseEmailFilter" class="ui-input" style="width: 280px; max-width: 70vw;" placeholder="输入邮箱筛选事件（可选）" />
+                        <input id="leaseEmailFilter" class="ui-input" style="width: 280px; max-width: 70vw;" placeholder="输入邮箱（可选，用于查看事件/单邮箱同步）" />
                     </div>
                     <div class="filter-right">
                         <button class="refresh-btn" onclick="openLeaseUpsert()">录入邮箱</button>
@@ -540,10 +540,6 @@
                     <div style="color:#86868b; font-size: 13px; line-height: 1.6;">
                         提示：到期计算以 <code>join_at</code>（加入时间）为准；若状态为“待同步加入时间”，表示还未拿到准确加入时间。
                     </div>
-                    <label style="display:inline-flex; align-items:center; gap:8px; margin-top:10px; font-size:13px; color:#86868b; user-select:none;">
-                        <input id="leaseHideNoise" type="checkbox" checked />
-                        隐藏同步噪音（member_no_time / not_joined / invite_status）
-                    </label>
                     <div id="leaseEventsTable" style="margin-top: 10px;"></div>
                 </div>
             </div>
@@ -1300,7 +1296,7 @@
 
             try {
                 const leases = await getLeases({ limit: 200, force: !!options.force });
-                let html = '<table><thead><tr><th>邮箱</th><th>当前团队</th><th>状态</th><th>加入时间</th><th>到期时间</th><th>转移次数</th><th>下次重试</th><th>最后错误</th><th>操作</th></tr></thead><tbody>';
+                let html = '<table><thead><tr><th>邮箱</th><th>当前团队</th><th>状态</th><th>加入时间</th><th>到期时间</th><th>转移次数</th><th>操作</th></tr></thead><tbody>';
 
                 leases.forEach(l => {
                     const email = escapeHtml(l.email || '-');
@@ -1309,14 +1305,9 @@
                     const status = escapeHtml(labelOf(LABELS.leaseStatus, statusKey, statusKey || '-'));
                     const joinAt = l.join_at ? new Date(l.join_at).toLocaleString() : '-';
                     const expAt = (statusKey === 'awaiting_join') ? '待同步' : (l.expires_at ? new Date(l.expires_at).toLocaleString() : '-');
-                    const nextAt = l.next_attempt_at ? new Date(l.next_attempt_at).toLocaleString() : '-';
-                    const err = escapeHtml(l.last_error || '');
                     const count = Number(l.transfer_count ?? 0);
                     const rawEmail = (l.email || '').toLowerCase();
                     const safeEmailAttr = escapeHtml(rawEmail);
-                    const approxJoinBtn = (statusKey === 'awaiting_join')
-                        ? `<button class="action-btn enable" data-action="lease-mark-joined" data-email="${safeEmailAttr}">近似加入</button>`
-                        : '';
 
                     const badgeClass =
                         statusKey === 'active' ? 'success' :
@@ -1333,12 +1324,8 @@
                             <td>${joinAt}</td>
                             <td>${expAt}</td>
                             <td>${count}</td>
-                            <td>${nextAt}</td>
-                            <td style="max-width: 240px;"><span class="team-cell" title="${err}">${err || '-'}</span></td>
                             <td style="display:flex; gap:8px; flex-wrap:wrap;">
                                 <button class="action-btn enable" data-action="lease-view" data-email="${safeEmailAttr}">查看</button>
-                                ${approxJoinBtn}
-                                <button class="action-btn disable" data-action="lease-expire" data-email="${safeEmailAttr}">强制到期</button>
                                 <button class="action-btn enable" data-action="lease-transfer" data-email="${safeEmailAttr}">执行转移</button>
                             </td>
                         </tr>
@@ -1362,12 +1349,8 @@
 
             try {
                 const events = await getLeaseEvents({ email: target, limit: 200, force: true });
-                const hideNoise = !!document.getElementById('leaseHideNoise')?.checked;
-                const filtered = hideNoise
-                    ? (events || []).filter(e => !new Set(['sync_member_no_time', 'sync_not_joined', 'sync_invite_status']).has((e.action || '').trim()))
-                    : (events || []);
                 let html = '<table><thead><tr><th>时间</th><th>邮箱</th><th>事件</th><th>原团队</th><th>新团队</th><th>说明</th></tr></thead><tbody>';
-                filtered.forEach(e => {
+                (events || []).forEach(e => {
                     const t = e.created_at ? new Date(e.created_at).toLocaleString() : '-';
                     const actionKey = (e.action || '').trim();
                     const actionText = escapeHtml(labelOf(LABELS.leaseAction, actionKey, actionKey || '-'));
@@ -1398,20 +1381,23 @@
             if (!action || !email) return;
 
             if (action === 'lease-view') loadLeaseEvents(email);
-            else if (action === 'lease-mark-joined') markLeaseJoinedApprox(email);
-            else if (action === 'lease-expire') forceExpireLease(email);
             else if (action === 'lease-transfer') runTransferForEmail(email);
         }, true);
 
         async function syncJoinTimes() {
-            const ok = await uiConfirm('将同步 awaiting_join 的 join_at（以邀请 accepted/completed 时间为准）。\n\n继续？', { title: '同步加入时间' });
+            const email = (document.getElementById('leaseEmailFilter')?.value || '').trim().toLowerCase();
+            const msg = email
+                ? `将只同步该邮箱的 join_at（以邀请 accepted/completed 时间为准）。\n\n邮箱: ${email}\n\n继续？`
+                : '将同步 awaiting_join 的 join_at（以邀请 accepted/completed 时间为准）。\n\n继续？';
+
+            const ok = await uiConfirm(msg, { title: '同步加入时间' });
             if (!ok) return;
 
             try {
                 const res = await fetchJson('/api/admin/leases/sync-join', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ limit: 80 })
+                    body: JSON.stringify(email ? { email } : { limit: 80 })
                 });
                 showToast(res.message || '同步完成', 'success', 2000);
                 cacheState.leases.ts = 0;
@@ -1444,49 +1430,6 @@
                 loadLeases({ force: true });
             } catch (e) {
                 showToast('执行失败: ' + e.message, 'danger', 2600);
-            }
-        }
-
-        async function forceExpireLease(email) {
-            const ok = await uiConfirmPhrase({
-                title: '测试操作',
-                message: `将强制该邮箱立即到期（仅用于测试）\\n\\n邮箱: ${email}`,
-                phrase: UI_CONFIRM_PHRASE
-            });
-            if (!ok) return;
-
-            try {
-                const res = await fetchJson('/api/admin/leases/force-expire', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ email })
-                });
-                showToast(res.message || '已强制到期', 'success', 2000);
-                cacheState.leases.ts = 0;
-                loadLeases({ force: true });
-            } catch (e) {
-                showToast('强制到期失败: ' + e.message, 'danger', 2600);
-            }
-        }
-
-        async function markLeaseJoinedApprox(email) {
-            const ok = await uiConfirm(
-                `将尝试从成员列表确认该邮箱已加入；若确认成功，则用“当前时间”近似写入 join_at，使其脱离 awaiting_join 并开始计时。\\n\\n邮箱: ${email}\\n\\n继续？`,
-                { title: '近似加入' }
-            );
-            if (!ok) return;
-            try {
-                const res = await fetchJson('/api/admin/leases/mark-joined', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ email, mode: 'now', verify: true })
-                });
-                showToast(res.message || '已写入 join_at', 'success', 2200);
-                cacheState.leases.ts = 0;
-                cacheState.leaseEvents.clear();
-                loadLeases({ force: true });
-            } catch (e) {
-                showToast('近似加入失败: ' + e.message, 'danger', 2600);
             }
         }
 

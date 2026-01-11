@@ -15,7 +15,7 @@ import config
 import ipaddress
 from team_service import get_member_info_for_email
 from transfer_service import start_transfer_worker
-from transfer_service import run_transfer_once, sync_joined_leases_once, sync_joined_leases_once_detailed, run_transfer_for_email
+from transfer_service import run_transfer_once, sync_joined_leases_once, sync_joined_leases_once_detailed, run_transfer_for_email, sync_joined_lease_for_email_once_detailed
 
 
 app = Flask(__name__)
@@ -637,6 +637,14 @@ def admin_sync_joined_leases():
     try:
         payload = request.get_json(silent=True) or {}
         limit = int(payload.get("limit", 50))
+        email = (payload.get("email") or "").strip().lower()
+        if email:
+            result = sync_joined_lease_for_email_once_detailed(email)
+            ok = int((result or {}).get("synced") or 0) > 0
+            reason = (result or {}).get("reason") or ""
+            msg = "已同步该邮箱 join_at" if ok else f"未同步（{reason or 'unknown'}）"
+            return jsonify({"success": True, "message": msg, "data": result})
+
         result = sync_joined_leases_once_detailed(limit=limit)
         msg = (
             f"已同步 {result.get('synced', 0)} 条（检查 {result.get('checked', 0)} 条）"

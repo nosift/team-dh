@@ -450,6 +450,17 @@ def sync_joined_leases_once_detailed(*, limit: int = 50) -> dict:
     return {k: int(v or 0) for k, v in (result or {}).items()}
 
 
+def sync_joined_lease_for_email_once_detailed(email: str) -> dict:
+    """
+    管理后台手动触发：只同步指定邮箱的 join_at（并记录事件）。
+    """
+    try:
+        result = _sync_joined_lease_for_email((email or "").strip().lower(), record_events=True)
+    except Exception:
+        result = {}
+    return {k: int(v or 0) if isinstance(v, (int, float, bool)) else v for k, v in (result or {}).items()}
+
+
 def run_transfer_for_email(email: str) -> dict:
     """
     管理后台手动触发：只执行指定邮箱的一次到期转移（不强制到期）。
