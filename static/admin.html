@@ -525,9 +525,6 @@
                         <input id="leaseEmailFilter" class="ui-input" style="width: 280px; max-width: 70vw;" placeholder="输入邮箱（可选，用于查看事件/单邮箱同步）" />
                     </div>
                 <div class="filter-right">
-                        <button class="refresh-btn" onclick="openLeaseUpsert()" title="把某个邮箱纳入“到期转移”体系，并设置到期时间">录入邮箱</button>
-                        <button class="refresh-btn" onclick="syncJoinTimes()" title="尝试从邀请/成员信息补齐“开始计时”（仅在系统能确认已加入时有效）">自动补开始计时</button>
-                        <button class="refresh-btn" onclick="runTransferOnce()" title="手动触发一次到期检查：只会对“已到期”的邮箱尝试转移">执行一次转移</button>
                         <button class="refresh-btn" onclick="loadLeases({ force: true })" title="刷新列表">刷新</button>
                     </div>
                 </div>
@@ -617,6 +614,16 @@
             <div style="margin-bottom: 24px;">
                 <label style="display: block; margin-bottom: 8px; color: #1d1d1f; font-weight: 500;">有效期(天) <span style="color: #86868b; font-weight: 400;">(留空表示永久)</span></label>
                 <input type="number" id="genExpiresDays" placeholder="留空表示永久有效" min="1" style="width: 100%; padding: 12px; border: 1px solid #d2d2d7; border-radius: 10px; font-size: 14px;">
+            </div>
+
+            <div style="margin-bottom: 24px; padding: 16px; background: #f5f5f7; border-radius: 10px;">
+                <label style="display: flex; align-items: center; cursor: pointer; user-select: none;">
+                    <input type="checkbox" id="genAutoTransfer" checked style="width: 20px; height: 20px; margin-right: 12px; cursor: pointer;">
+                    <div>
+                        <div style="color: #1d1d1f; font-weight: 500; margin-bottom: 4px;">启用自动转移</div>
+                        <div style="color: #86868b; font-size: 13px; line-height: 1.4;">取消勾选后，使用该兑换码的用户将成为VIP用户，永久使用当前Team，不参与按月自动转移</div>
+                    </div>
+                </label>
             </div>
 
             <div style="display: flex; gap: 12px; justify-content: flex-end;">
@@ -1325,8 +1332,9 @@
                             <td>${expAt}</td>
                             <td>${count}</td>
                             <td style="display:flex; gap:8px; flex-wrap:wrap;">
-                                <button class="action-btn enable" data-action="lease-view" data-email="${safeEmailAttr}" title="只查看该邮箱的“转移相关记录”">转移记录</button>
+                                <button class="action-btn enable" data-action="lease-view" data-email="${safeEmailAttr}" title="只查看该邮箱的"转移相关记录"">转移记录</button>
                                 <button class="action-btn enable" data-action="lease-transfer" data-email="${safeEmailAttr}" title="对该邮箱执行一次到期检查：仅到期才会尝试转移">执行转移</button>
+                                <button class="action-btn delete" data-action="lease-delete" data-email="${safeEmailAttr}" title="删除该邮箱的租约，用户将永久退出自动转移">删除</button>
                             </td>
                         </tr>
                     `;
@@ -1389,6 +1397,7 @@
 
             if (action === 'lease-view') loadLeaseEvents(email);
             else if (action === 'lease-transfer') runTransferForEmail(email);
+            else if (action === 'lease-delete') deleteLease(email);
         }, true);
 
         async function syncJoinTimes() {
@@ -1466,6 +1475,24 @@
                 loadLeases({ force: true });
             } catch (e) {
                 showToast('执行失败: ' + e.message, 'danger', 2600);
+            }
+        }
+
+        async function deleteLease(email) {
+            const ok = await uiConfirm(`确定要删除 ${email} 的租约吗？\n\n删除后该用户将永久退出自动转移。`, { title: '删除租约' });
+            if (!ok) return;
+            try {
+                const res = await fetchJson('/api/admin/leases/delete', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email })
+                });
+                showToast(res.message || '删除成功', 'success', 2000);
+                cacheState.leases.ts = 0;
+                cacheState.leaseEvents.clear();
+                loadLeases({ force: true });
+            } catch (e) {
+                showToast('删除失败: ' + e.message, 'danger', 2600);
             }
         }
 
@@ -1778,6 +1805,7 @@
             document.getElementById('genCount').value = 4;
             document.getElementById('genMaxUses').value = 1;
             document.getElementById('genExpiresDays').value = '';
+            document.getElementById('genAutoTransfer').checked = true;  // 默认启用
             document.getElementById('generateCodesModal').style.display = 'flex';
         }
 
@@ -1788,6 +1816,7 @@
             const expiresDaysInput = document.getElementById('genExpiresDays').value;
             const expiresDays = expiresDaysInput ? parseInt(expiresDaysInput) : null;
             const teamName = (document.getElementById('genTeamName').value || '').trim();
+            const autoTransferEnabled = document.getElementById('genAutoTransfer').checked;
 
             if (!count || count < 1 || count > 1000) {
                 showToast('生成数量必须在 1-1000 之间', 'danger', 2200);
@@ -1799,7 +1828,7 @@
                 return;
             }
 
-            const payload = { count, max_uses: maxUses };
+            const payload = { count, max_uses: maxUses, auto_transfer_enabled: autoTransferEnabled };
             if (teamName) payload.team_name = teamName;
             if (expiresDays) {
                 payload.expires_days = expiresDays;
