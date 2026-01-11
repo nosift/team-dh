@@ -417,6 +417,10 @@ def admin_list_codes():
             c["team_index"] = _team_index_from_any_name(c.get("team_name"))
             c["team_name"] = _team_display_name(c.get("team_name")) or c.get("team_name")
 
+            # 中文化 auto_transfer_enabled 字段
+            auto_transfer = c.get("auto_transfer_enabled", 1)
+            c["权限类型"] = "普通用户(按月转移)" if auto_transfer else "VIP用户(永久使用)"
+
         return jsonify({
             "success": True,
             "data": codes
@@ -479,13 +483,38 @@ def admin_list_member_leases():
         limit = int(request.args.get("limit", 100))
         offset = int(request.args.get("offset", 0))
         rows = db.list_member_leases(limit=limit, offset=offset)
-        # 统一把 DATETIME 字符串转成 ISO 形式（避免前端 Date 解析在不同浏览器不一致）
+
+        # 状态翻译映射
+        status_map = {
+            "pending": "待加入",
+            "active": "生效中",
+            "transferring": "转移中",
+            "failed": "失败",
+            "cancelled": "已取消"
+        }
+
+        # 统一把 DATETIME 字符串转成 ISO 形式 + 中文化字段名和状态
+        result = []
         for r in rows:
-            for k in ("start_at", "join_at", "expires_at", "next_attempt_at", "last_synced_at", "updated_at"):
+            # 时间格式化
+            for k in ("created_at", "invited_at", "joined_at", "expires_at", "next_attempt_at", "last_synced_at", "updated_at"):
                 v = r.get(k)
                 if isinstance(v, str) and " " in v and "T" not in v:
                     r[k] = v.replace(" ", "T", 1)
-        return jsonify({"success": True, "data": rows})
+
+            # 构建中文化数据
+            result.append({
+                "邮箱": r.get("email"),
+                "当前团队": r.get("team_name"),
+                "状态": status_map.get(r.get("status"), r.get("status")),
+                "加入时间": r.get("joined_at"),
+                "到期时间": r.get("expires_at"),
+                "转移次数": r.get("transfer_count", 0),
+                # 保留原始字段供前端内部使用(如果需要)
+                "_raw": r
+            })
+
+        return jsonify({"success": True, "data": result})
     except Exception as e:
         log.error(f"获取成员租约失败: {e}")
         return jsonify({"success": False, "error": str(e)}), 500
