@@ -360,6 +360,13 @@ def admin_stats():
             if not isinstance(idx, int):
                 continue
             row = stats_by_index.get(idx) or {}
+            last_updated = row.get("last_updated")
+            # teams_stats.last_updated 来自 SQLite CURRENT_TIMESTAMP（UTC）
+            if isinstance(last_updated, str) and last_updated:
+                if " " in last_updated and "T" not in last_updated:
+                    last_updated = last_updated.replace(" ", "T", 1)
+                if not (last_updated.endswith("Z") or "+" in last_updated or "-" in last_updated[10:]):
+                    last_updated = last_updated + "Z"
             team_stats.append(
                 {
                     "team_name": team.get("name"),
@@ -368,7 +375,7 @@ def admin_stats():
                     "used_seats": row.get("used_seats", 0),
                     "pending_invites": row.get("pending_invites", 0),
                     "available_seats": row.get("available_seats", 0),
-                    "last_updated": row.get("last_updated"),
+                    "last_updated": last_updated,
                 }
             )
 
@@ -432,6 +439,14 @@ def admin_list_redemptions():
             r["team_key"] = r.get("team_name")
             r["team_index"] = _team_index_from_any_name(r.get("team_name"))
             r["team_name"] = _team_display_name(r.get("team_name")) or r.get("team_name")
+            # redeemed_at 来自 SQLite CURRENT_TIMESTAMP（UTC），统一转 ISO+Z 便于前端正确显示本地时间
+            v = r.get("redeemed_at")
+            if isinstance(v, str) and v:
+                if " " in v and "T" not in v:
+                    v = v.replace(" ", "T", 1)
+                if not (v.endswith("Z") or "+" in v or "-" in v[10:]):
+                    v = v + "Z"
+                r["redeemed_at"] = v
 
         return jsonify({
             "success": True,
@@ -622,8 +637,13 @@ def admin_list_member_lease_events():
         rows = db.list_member_lease_events(email=email, limit=limit, offset=offset)
         for r in rows:
             v = r.get("created_at")
-            if isinstance(v, str) and " " in v and "T" not in v:
-                r["created_at"] = v.replace(" ", "T", 1)
+            # member_lease_events.created_at 来自 SQLite CURRENT_TIMESTAMP（UTC）
+            if isinstance(v, str) and v:
+                if " " in v and "T" not in v:
+                    v = v.replace(" ", "T", 1)
+                if not (v.endswith("Z") or "+" in v or "-" in v[10:]):
+                    v = v + "Z"
+                r["created_at"] = v
         return jsonify({"success": True, "data": rows})
     except Exception as e:
         log.error(f"获取租约事件失败: {e}")

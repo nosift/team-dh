@@ -1157,7 +1157,7 @@
                 let html = '<table><thead><tr><th>Team</th><th>总席位</th><th>已使用</th><th>待接受</th><th>可用席位</th><th>最后更新</th></tr></thead><tbody>';
 
                 teams.forEach(team => {
-                    const time = new Date(team.last_updated).toLocaleString();
+                    const time = team.last_updated ? new Date(team.last_updated).toLocaleString() : '-';
                     const teamName = team.team_display_name || team.team_name || team.team_key || '-';
                     const safeTeamName = escapeHtml(teamName);
 
