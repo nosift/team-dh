@@ -502,17 +502,21 @@ def admin_list_member_leases():
                 if isinstance(v, str) and " " in v and "T" not in v:
                     r[k] = v.replace(" ", "T", 1)
 
-            # 构建中文化数据
-            result.append({
+            # 状态翻译
+            status_raw = r.get("status", "")
+            status_cn = status_map.get(status_raw, status_raw)
+
+            # 保留原始英文字段 + 添加中文字段
+            item = dict(r)  # 复制所有原始字段
+            item.update({
                 "邮箱": r.get("email"),
                 "当前团队": r.get("team_name"),
-                "状态": status_map.get(r.get("status"), r.get("status")),
+                "状态": status_cn,
                 "加入时间": r.get("joined_at"),
                 "到期时间": r.get("expires_at"),
-                "转移次数": r.get("transfer_count", 0),
-                # 保留原始字段供前端内部使用(如果需要)
-                "_raw": r
+                "转移次数": r.get("transfer_count", 0)
             })
+            result.append(item)
 
         return jsonify({"success": True, "data": result})
     except Exception as e:
