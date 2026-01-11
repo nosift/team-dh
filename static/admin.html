@@ -1161,10 +1161,10 @@
             try {
                 const data = await getStats(options);
                 const teams = data.teams;
-                let html = '<table><thead><tr><th>Team</th><th>Total Seats</th><th>Used</th><th>Pending</th><th>Available</th><th>Added At</th></tr></thead><tbody>';
+                let html = '<table><thead><tr><th>Team</th><th>总席位</th><th>已使用</th><th>待接受</th><th>可用席位</th><th>添加时间</th></tr></thead><tbody>';
 
                 teams.forEach(team => {
-                    const time = team.created_at ? new Date(team.created_at).toLocaleString() : 'Unknown';
+                    const time = team.created_at ? new Date(team.created_at).toLocaleString() : '未知';
                     const teamName = team.team_display_name || team.team_name || team.team_key || '-';
                     const safeTeamName = escapeHtml(teamName);
 
@@ -1636,12 +1636,12 @@
             teamListTable.innerHTML = '<div class="loading">加载中...</div>';
             try {
                 const teams = await getTeams(options);
-                let html = '<table><thead><tr><th>Name</th><th>Email</th><th>Account ID</th><th>Token</th><th>Actions</th></tr></thead><tbody>';
+                let html = '<table><thead><tr><th>Team名称</th><th>邮箱</th><th>Account ID</th><th>Token状态</th><th>操作</th></tr></thead><tbody>';
 
                 teams.forEach(team => {
                     const tokenBadge = team.has_token ?
-                        '<span class="badge success">Configured</span>' :
-                        '<span class="badge warning">Missing</span>';
+                        '<span class="badge success">已配置</span>' :
+                        '<span class="badge warning">未配置</span>';
 
                     const accountId = team.account_id || '';
                     const accountIdDisplay = accountId ? `${accountId.substring(0, 16)}...` : '-';

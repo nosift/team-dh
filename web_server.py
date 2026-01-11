@@ -370,6 +370,32 @@ def admin_stats():
                 if not (last_updated.endswith("Z") or "+" in last_updated or "-" in last_updated[10:]):
                     last_updated = last_updated + "Z"
 
+            created_at = team.get("created_at")
+            # 兼容老数据：Team 没有 created_at 时，用该 Team 最早生成兑换码的时间兜底（近似“添加时间”）
+            if not created_at:
+                try:
+                    with db.get_connection() as conn:
+                        cursor = conn.cursor()
+                        cursor.execute(
+                            """
+                            SELECT MIN(created_at) AS first_time
+                            FROM redemption_codes
+                            WHERE team_name IN (?, ?)
+                        """,
+                            (team_name, f"Team{idx+1}"),
+                        )
+                        r = cursor.fetchone()
+                        created_at = (r["first_time"] if r else None)
+                except Exception:
+                    created_at = None
+
+            if isinstance(created_at, str) and created_at:
+                if " " in created_at and "T" not in created_at:
+                    created_at = created_at.replace(" ", "T", 1)
+                # redemption_codes.created_at 来自 SQLite CURRENT_TIMESTAMP（UTC）
+                if not (created_at.endswith("Z") or "+" in created_at or "-" in created_at[10:]):
+                    created_at = created_at + "Z"
+
             team_stats.append(
                 {
                     "team_name": team_name,
@@ -378,7 +404,7 @@ def admin_stats():
                     "used_seats": row.get("used_seats", 0),
                     "pending_invites": row.get("pending_invites", 0),
                     "available_seats": row.get("available_seats", 0),
-                    "created_at": team.get("created_at"),
+                    "created_at": created_at,
                     "last_updated": last_updated,
                 }
             )
