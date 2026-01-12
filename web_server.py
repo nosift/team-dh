@@ -265,7 +265,8 @@ def admin_login():
     <style>
         body { font-family: Arial; max-width: 400px; margin: 100px auto; padding: 20px; }
         input { width: 100%; padding: 10px; margin: 10px 0; }
-        button { width: 100%; padding: 10px; background: #007bff; color: white; border: none; cursor: pointer; }
+        button { width: 100%; padding: 10px; background: #000000; color: white; border: none; cursor: pointer; border-radius: 8px; }
+        button:hover { background: #1d1d1f; }
         .error { color: red; margin: 10px 0; }
     </style>
 </head>
@@ -289,7 +290,8 @@ def admin_login():
     <style>
         body { font-family: Arial; max-width: 400px; margin: 100px auto; padding: 20px; }
         input { width: 100%; padding: 10px; margin: 10px 0; }
-        button { width: 100%; padding: 10px; background: #007bff; color: white; border: none; cursor: pointer; }
+        button { width: 100%; padding: 10px; background: #000000; color: white; border: none; cursor: pointer; border-radius: 8px; }
+        button:hover { background: #1d1d1f; }
     </style>
 </head>
 <body>
