@@ -263,8 +263,9 @@ def admin_login():
     <meta charset="UTF-8">
     <title>管理员登录</title>
     <style>
+        * { box-sizing: border-box; }
         body { font-family: Arial; max-width: 400px; margin: 100px auto; padding: 20px; }
-        input { width: 100%; padding: 10px; margin: 10px 0; }
+        input { width: 100%; padding: 10px; margin: 10px 0; border: 1px solid #d2d2d7; border-radius: 8px; }
         button { width: 100%; padding: 10px; background: #000000; color: white; border: none; cursor: pointer; border-radius: 8px; }
         button:hover { background: #1d1d1f; }
         .error { color: red; margin: 10px 0; }
@@ -288,8 +289,9 @@ def admin_login():
     <meta charset="UTF-8">
     <title>管理员登录</title>
     <style>
+        * { box-sizing: border-box; }
         body { font-family: Arial; max-width: 400px; margin: 100px auto; padding: 20px; }
-        input { width: 100%; padding: 10px; margin: 10px 0; }
+        input { width: 100%; padding: 10px; margin: 10px 0; border: 1px solid #d2d2d7; border-radius: 8px; }
         button { width: 100%; padding: 10px; background: #000000; color: white; border: none; cursor: pointer; border-radius: 8px; }
         button:hover { background: #1d1d1f; }
     </style>
