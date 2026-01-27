@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Team 统计调试</title>
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f7;
+        }
+        h1 { color: #1d1d1f; }
+        .section {
+            background: white;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        .section h2 {
+            margin-top: 0;
+            color: #1d1d1f;
+            border-bottom: 2px solid #0071e3;
+            padding-bottom: 10px;
+        }
+        pre {
+            background: #f5f5f7;
+            padding: 15px;
+            border-radius: 8px;
+            overflow-x: auto;
+            font-size: 13px;
+            line-height: 1.5;
+        }
+        .btn {
+            background: #0071e3;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+        }
+        .btn:hover {
+            background: #0077ed;
+        }
+        .loading {
+            color: #86868b;
+            font-style: italic;
+        }
+        .error {
+            color: #ff3b30;
+            background: #fff5f5;
+            padding: 15px;
+            border-radius: 8px;
+            border-left: 4px solid #ff3b30;
+        }
+        .success {
+            color: #34c759;
+            background: #f0fdf4;
+            padding: 15px;
+            border-radius: 8px;
+            border-left: 4px solid #34c759;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+        }
+        th, td {
+            text-align: left;
+            padding: 10px;
+            border-bottom: 1px solid #d2d2d7;
+        }
+        th {
+            background: #f5f5f7;
+            font-weight: 600;
+        }
+        .badge {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 500;
+        }
+        .badge-success { background: #d1f4e0; color: #0f5132; }
+        .badge-danger { background: #f8d7da; color: #842029; }
+        .badge-warning { background: #fff3cd; color: #664d03; }
+    </style>
+</head>
+<body>
+    <h1>Team 统计调试工具</h1>
+
+    <div class="section">
+        <button class="btn" onclick="loadDebugInfo()">刷新调试信息</button>
+        <button class="btn" onclick="window.location.href='/admin'" style="background: #86868b;">返回管理后台</button>
+    </div>
+
+    <div id="status" class="section" style="display: none;"></div>
+
+    <div id="teamsFromManager" class="section" style="display: none;">
+        <h2>1. 配置的 Team 列表 (team_manager.get_team_list())</h2>
+        <div id="teamsFromManagerContent"></div>
+    </div>
+
+    <div id="rawDbStats" class="section" style="display: none;">
+        <h2>2. 数据库统计记录 (db.list_team_stats())</h2>
+        <div id="rawDbStatsContent"></div>
+    </div>
+
+    <div id="configTeams" class="section" style="display: none;">
+        <h2>3. config.TEAMS</h2>
+        <div id="configTeamsContent"></div>
+    </div>
+
+    <div id="matchResults" class="section" style="display: none;">
+        <h2>4. 匹配结果 (_team_index_from_any_name)</h2>
+        <div id="matchResultsContent"></div>
+    </div>
+
+    <div id="rawJson" class="section" style="display: none;">
+        <h2>原始 JSON 数据</h2>
+        <pre id="rawJsonContent"></pre>
+    </div>
+
+    <script>
+        async function loadDebugInfo() {
+            const statusDiv = document.getElementById('status');
+            statusDiv.style.display = 'block';
+            statusDiv.className = 'section loading';
+            statusDiv.innerHTML = '正在加载调试信息...';
+
+            // 隐藏所有结果区域
+            ['teamsFromManager', 'rawDbStats', 'configTeams', 'matchResults', 'rawJson'].forEach(id => {
+                document.getElementById(id).style.display = 'none';
+            });
+
+            try {
+                const response = await fetch('/api/admin/debug/team-stats');
+                const result = await response.json();
+
+                if (!result.success) {
+                    statusDiv.className = 'section error';
+                    statusDiv.innerHTML = `<strong>错误:</strong> ${result.error}`;
+                    if (result.traceback) {
+                        statusDiv.innerHTML += `<pre>${result.traceback}</pre>`;
+                    }
+                    return;
+                }
+
+                statusDiv.className = 'section success';
+                statusDiv.innerHTML = '✓ 调试信息加载成功';
+
+                const data = result.data;
+
+                // 显示原始 JSON
+                document.getElementById('rawJson').style.display = 'block';
+                document.getElementById('rawJsonContent').textContent = JSON.stringify(data, null, 2);
+
+                // 1. Team 列表
+                renderTeamsFromManager(data.teams_from_manager);
+
+                // 2. 数据库统计
+                renderRawDbStats(data.raw_db_stats);
+
+                // 3. config.TEAMS
+                renderConfigTeams(data.config_teams);
+
+                // 4. 匹配结果
+                renderMatchResults(data.match_results);
+
+            } catch (error) {
+                statusDiv.className = 'section error';
+                statusDiv.innerHTML = `<strong>请求失败:</strong> ${error.message}`;
+                console.error('加载调试信息失败:', error);
+            }
+        }
+
+        function renderTeamsFromManager(teams) {
+            const div = document.getElementById('teamsFromManager');
+            const content = document.getElementById('teamsFromManagerContent');
+
+            if (!teams || teams.length === 0) {
+                content.innerHTML = '<p class="loading">没有配置的 Team</p>';
+                div.style.display = 'block';
+                return;
+            }
+
+            let html = `<p>共 ${teams.length} 个 Team</p><table><thead><tr><th>Index</th><th>Name</th><th>Email</th><th>Account ID</th><th>Has Token</th></tr></thead><tbody>`;
+            teams.forEach(team => {
+                html += `
+                    <tr>
+                        <td>${team.index}</td>
+                        <td><strong>${team.name}</strong></td>
+                        <td>${team.email || '-'}</td>
+                        <td><code>${team.account_id || '-'}</code></td>
+                        <td><span class="badge ${team.has_token ? 'badge-success' : 'badge-danger'}">${team.has_token ? '是' : '否'}</span></td>
+                    </tr>
+                `;
+            });
+            html += '</tbody></table>';
+            content.innerHTML = html;
+            div.style.display = 'block';
+        }
+
+        function renderRawDbStats(stats) {
+            const div = document.getElementById('rawDbStats');
+            const content = document.getElementById('rawDbStatsContent');
+
+            if (!stats || stats.length === 0) {
+                content.innerHTML = '<p class="loading">数据库中没有统计记录</p>';
+                div.style.display = 'block';
+                return;
+            }
+
+            let html = `<p>共 ${stats.length} 条记录</p><table><thead><tr><th>Team Name</th><th>Total Seats</th><th>Used Seats</th><th>Pending</th><th>Available</th></tr></thead><tbody>`;
+            stats.forEach(stat => {
+                html += `
+                    <tr>
+                        <td><strong>${stat.team_name}</strong></td>
+                        <td>${stat.total_seats || 0}</td>
+                        <td>${stat.used_seats || 0}</td>
+                        <td>${stat.pending_invites || 0}</td>
+                        <td>${stat.available_seats || 0}</td>
+                    </tr>
+                `;
+            });
+            html += '</tbody></table>';
+            content.innerHTML = html;
+            div.style.display = 'block';
+        }
+
+        function renderConfigTeams(teams) {
+            const div = document.getElementById('configTeams');
+            const content = document.getElementById('configTeamsContent');
+
+            if (!teams || teams.length === 0) {
+                content.innerHTML = '<p class="loading">config.TEAMS 为空</p>';
+                div.style.display = 'block';
+                return;
+            }
+
+            let html = `<p>共 ${teams.length} 个 Team</p><table><thead><tr><th>Index</th><th>Name</th><th>Account ID</th><th>Has Token</th></tr></thead><tbody>`;
+            teams.forEach(team => {
+                html += `
+                    <tr>
+                        <td>${team.index}</td>
+                        <td><strong>${team.name}</strong></td>
+                        <td><code>${team.account_id || '-'}</code></td>
+                        <td><span class="badge ${team.has_token ? 'badge-success' : 'badge-danger'}">${team.has_token ? '是' : '否'}</span></td>
+                    </tr>
+                `;
+            });
+            html += '</tbody></table>';
+            content.innerHTML = html;
+            div.style.display = 'block';
+        }
+
+        function renderMatchResults(results) {
+            const div = document.getElementById('matchResults');
+            const content = document.getElementById('matchResultsContent');
+
+            if (!results || results.length === 0) {
+                content.innerHTML = '<p class="loading">没有匹配结果</p>';
+                div.style.display = 'block';
+                return;
+            }
+
+            let html = `<p>共 ${results.length} 条匹配测试</p><table><thead><tr><th>数据库 Team Name</th><th>匹配到的 Index</th><th>Resolved Team</th><th>Resolved Account ID</th><th>状态</th></tr></thead><tbody>`;
+            results.forEach(result => {
+                const matched = result.matched_index !== null;
+                html += `
+                    <tr>
+                        <td><strong>${result.db_team_name}</strong></td>
+                        <td>${result.matched_index !== null ? result.matched_index : '-'}</td>
+                        <td>${result.resolved_team || '-'}</td>
+                        <td><code>${result.resolved_account_id || '-'}</code></td>
+                        <td><span class="badge ${matched ? 'badge-success' : 'badge-danger'}">${matched ? '✓ 匹配成功' : '✗ 匹配失败'}</span></td>
+                    </tr>
+                `;
+            });
+            html += '</tbody></table>';
+            content.innerHTML = html;
+            div.style.display = 'block';
+        }
+
+        // 页面加载时自动加载调试信息
+        window.addEventListener('load', loadDebugInfo);
+    </script>
+</body>
+</html>

@@ -568,6 +568,21 @@ def admin_dashboard():
     return response
 
 
+@app.route("/admin/debug/team-stats")
+@require_admin
+def admin_debug_team_stats_page():
+    """Team 统计调试页面"""
+    from flask import make_response
+    with open("static/debug-team-stats.html", "r", encoding="utf-8") as f:
+        content = f.read()
+
+    response = make_response(content)
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
+
+
 @app.route("/api/admin/stats")
 @require_admin
 def admin_stats():
@@ -579,14 +594,22 @@ def admin_stats():
         # 获取Team统计
         raw_team_stats = db.list_team_stats()
 
-        # 只返回“当前已配置的 Team”，并对历史遗留的 Team1/Team2/Team3 名称做归一化，避免出现重复/莫名其妙的 TeamX
+        # 只返回"当前已配置的 Team"，并对历史遗留的 Team1/Team2/Team3 名称做归一化，避免出现重复/莫名其妙的 TeamX
         from team_manager import team_manager
 
         teams = team_manager.get_team_list()
+
+        # 调试日志
+        log.info(f"[Team Stats] 配置的 Team 数量: {len(teams)}")
+        log.info(f"[Team Stats] 数据库统计记录数量: {len(raw_team_stats)}")
+
         stats_by_index: dict[int, dict] = {}
         for row in raw_team_stats:
-            idx = _team_index_from_any_name(row.get("team_name"))
+            team_name = row.get("team_name")
+            idx = _team_index_from_any_name(team_name)
+            log.info(f"[Team Stats] 数据库记录: team_name={team_name}, 匹配到 index={idx}")
             if idx is None:
+                log.warning(f"[Team Stats] 无法匹配 team_name={team_name}，跳过此记录")
                 continue
             prev = stats_by_index.get(idx)
             if not prev:
@@ -600,9 +623,11 @@ def admin_stats():
         for team in teams:
             idx = team.get("index")
             if not isinstance(idx, int):
+                log.warning(f"[Team Stats] Team index 不是整数: {idx}")
                 continue
             row = stats_by_index.get(idx) or {}
             team_name = team.get("name")
+            log.info(f"[Team Stats] 处理 Team: index={idx}, name={team_name}, 有统计数据={bool(row)}")
 
             last_updated = row.get("last_updated")
             # teams_stats.last_updated 来自 SQLite CURRENT_TIMESTAMP（UTC）
@@ -678,6 +703,61 @@ def admin_stats():
     except Exception as e:
         log.error(f"获取统计失败: {e}")
         return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/admin/debug/team-stats")
+@require_admin
+def debug_team_stats_api():
+    """调试 Team 统计（仅用于排查问题）"""
+    try:
+        from team_manager import team_manager
+
+        # 1. 配置的 Team 列表
+        teams = team_manager.get_team_list()
+
+        # 2. 数据库统计
+        raw_team_stats = db.list_team_stats()
+
+        # 3. config.TEAMS
+        config_teams = []
+        for idx, t in enumerate(config.TEAMS):
+            config_teams.append({
+                "index": idx,
+                "name": t.get("name"),
+                "account_id": t.get("account_id"),
+                "has_token": bool(t.get("token"))
+            })
+
+        # 4. 匹配测试
+        match_results = []
+        for row in raw_team_stats:
+            team_name = row.get("team_name")
+            idx = _team_index_from_any_name(team_name)
+            resolved = config.resolve_team(team_name)
+            match_results.append({
+                "db_team_name": team_name,
+                "matched_index": idx,
+                "resolved_team": resolved.get("name") if resolved else None,
+                "resolved_account_id": resolved.get("account_id") if resolved else None
+            })
+
+        return jsonify({
+            "success": True,
+            "data": {
+                "teams_from_manager": teams,
+                "raw_db_stats": raw_team_stats,
+                "config_teams": config_teams,
+                "match_results": match_results
+            }
+        })
+    except Exception as e:
+        log.error(f"调试失败: {e}")
+        import traceback
+        return jsonify({
+            "success": False,
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
 
 
 @app.route("/api/admin/codes")

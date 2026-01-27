@@ -1474,7 +1474,22 @@
             teamsTable.innerHTML = '<div class="loading">加载中...</div>';
             try {
                 const data = await getStats(options);
+                console.log('getStats 返回数据:', data);
+
                 const teams = data.teams;
+                console.log('teams 数组:', teams);
+
+                if (!teams || !Array.isArray(teams)) {
+                    console.error('teams 不是数组:', teams);
+                    teamsTable.innerHTML = '<div class="loading">数据格式错误</div>';
+                    return;
+                }
+
+                if (teams.length === 0) {
+                    teamsTable.innerHTML = '<div class="loading">暂无 Team 数据</div>';
+                    return;
+                }
+
                 let html = '<table><thead><tr><th>Team</th><th>总席位</th><th>已使用</th><th>待接受</th><th>可用席位</th><th>创建时间</th><th>使用时长</th><th>操作</th></tr></thead><tbody>';
 
                 teams.forEach(team => {
@@ -1534,7 +1549,8 @@
                 teamsTable.innerHTML = html;
             } catch (error) {
                 console.error('加载Team统计失败:', error);
-                teamsTable.innerHTML = '<div class="loading">加载失败</div>';
+                console.error('错误堆栈:', error.stack);
+                teamsTable.innerHTML = '<div class="loading">加载失败: ' + error.message + '</div>';
             }
         }
 
