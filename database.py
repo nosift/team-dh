@@ -137,7 +137,10 @@ class Database:
                 cursor.execute("ALTER TABLE teams_stats ADD COLUMN created_at DATETIME")
                 log.info("已添加 created_at 字段到 teams_stats 表")
             if "first_seen_at" not in teams_stats_cols:
-                cursor.execute("ALTER TABLE teams_stats ADD COLUMN first_seen_at DATETIME DEFAULT CURRENT_TIMESTAMP")
+                # SQLite 不支持 ALTER TABLE 时使用 CURRENT_TIMESTAMP，需要分两步
+                cursor.execute("ALTER TABLE teams_stats ADD COLUMN first_seen_at DATETIME")
+                # 为现有记录设置默认值
+                cursor.execute("UPDATE teams_stats SET first_seen_at = CURRENT_TIMESTAMP WHERE first_seen_at IS NULL")
                 log.info("已添加 first_seen_at 字段到 teams_stats 表")
             if "created_at_source" not in teams_stats_cols:
                 cursor.execute("ALTER TABLE teams_stats ADD COLUMN created_at_source VARCHAR(20)")
