@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 import config
+from config import env_bool
 from database import db
 from date_utils import add_months_same_day
 from join_sync_service import JoinSyncService
@@ -16,19 +17,6 @@ from lease_models import LeaseAction
 from logger import log
 from redemption_service import RedemptionService
 from team_service import invite_single_email, remove_member_by_email
-
-
-def _env_bool(name: str, default: bool = False) -> bool:
-    '''解析环境变量为布尔值'''
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    v = raw.strip().lower()
-    if v in {'1', 'true', 'yes', 'y', 'on'}:
-        return True
-    if v in {'0', 'false', 'no', 'n', 'off'}:
-        return False
-    return default
 
 
 def _pick_next_team(*, current_account_id: str | None, current_team_name: str | None, email: str) -> list[dict]:
@@ -146,7 +134,7 @@ class TransferExecutor:
             return False
 
         # 是否自动退出旧 Team
-        kick_old = _env_bool('AUTO_TRANSFER_AUTO_LEAVE_OLD_TEAM', False) or _env_bool(
+        kick_old = env_bool('AUTO_TRANSFER_AUTO_LEAVE_OLD_TEAM', False) or env_bool(
             'AUTO_TRANSFER_KICK_OLD_TEAM', False
         )
         kicked_old = False

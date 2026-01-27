@@ -9,23 +9,11 @@ import threading
 import time
 import uuid
 
+from config import env_bool
 from database import db
 from join_sync_service import JoinSyncService
 from logger import log
 from transfer_executor import TransferExecutor
-
-
-def _env_bool(name: str, default: bool = False) -> bool:
-    '''解析环境变量为布尔值'''
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    v = raw.strip().lower()
-    if v in {'1', 'true', 'yes', 'y', 'on'}:
-        return True
-    if v in {'0', 'false', 'no', 'n', 'off'}:
-        return False
-    return default
 
 
 class TransferScheduler:
@@ -150,7 +138,7 @@ class TransferScheduler:
             return
         TransferScheduler._worker_started = True
 
-        if not _env_bool('AUTO_TRANSFER_ENABLED', False):
+        if not env_bool('AUTO_TRANSFER_ENABLED', False):
             log.info('AUTO_TRANSFER_ENABLED=false，自动转移功能未启用', icon='info')
             return
 

@@ -606,3 +606,125 @@ def print_team_summary(team: dict):
         log.info(f"{seats_info} | {pending_info} | {available_info}")
     else:
         log.warning("无法获取状态信息")
+
+
+def get_organization_info(team_cfg: dict) -> dict | None:
+    """获取 Organization 信息（包含创建时间）
+
+    Args:
+        team_cfg: Team 配置
+
+    Returns:
+        dict: Organization 信息，包含 created_at
+    """
+    token = team_cfg.get("auth_token")
+    if not token:
+        return None
+
+    try:
+        # 尝试从 session API 获取信息
+        response = http_session.get(
+            "https://chatgpt.com/api/auth/session",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "User-Agent": USER_AGENT
+            },
+            timeout=REQUEST_TIMEOUT
+        )
+
+        if response.status_code == 200:
+            data = response.json()
+            # 从 session 数据中提取创建时间
+            # 注意：实际 API 响应格式可能不同，需要根据实际情况调整
+            return {
+                "success": True,
+                "data": data
+            }
+    except Exception as e:
+        log.warning(f"获取 Organization 信息失败: {e}")
+
+    return None
+
+
+def estimate_team_created_time(team_name: str) -> tuple[datetime | None, str]:
+    """推断 Team 创建时间
+
+    Args:
+        team_name: Team 名称
+
+    Returns:
+        tuple: (创建时间, 数据来源)
+    """
+    from database import db
+
+    # 方法 1: 最早的兑换记录
+    earliest_redemption = db.get_earliest_redemption(team_name)
+
+    # 方法 2: 最早的成员加入时间
+    earliest_lease = db.get_earliest_lease(team_name)
+
+    # 方法 3: first_seen_at
+    team_info = db.get_team_created_at(team_name)
+    first_seen = None
+    if team_info and team_info.get("first_seen_at"):
+        try:
+            first_seen = datetime.fromisoformat(team_info["first_seen_at"])
+        except Exception:
+            pass
+
+    # 取最早的时间
+    times = []
+    if earliest_redemption:
+        times.append((earliest_redemption, "earliest_redemption"))
+    if earliest_lease:
+        times.append((earliest_lease, "earliest_lease"))
+    if first_seen:
+        times.append((first_seen, "first_seen"))
+
+    if times:
+        # 按时间排序，取最早的
+        times.sort(key=lambda x: x[0])
+        return times[0][0], f"estimated_{times[0][1]}"
+
+    return None, "unknown"
+
+
+def sync_team_created_time(team_name: str) -> dict:
+    """同步 Team 创建时间
+
+    Args:
+        team_name: Team 名称
+
+    Returns:
+        dict: 同步结果
+    """
+    from database import db
+    import config
+
+    team_cfg = config.resolve_team(team_name)
+    if not team_cfg:
+        return {
+            "success": False,
+            "message": "Team 配置不存在"
+        }
+
+    # 尝试从 API 获取（暂时跳过，因为 API 格式不确定）
+    # org_info = get_organization_info(team_cfg)
+
+    # 使用推断方法
+    estimated_time, source = estimate_team_created_time(team_name)
+
+    if estimated_time:
+        db.update_team_created_at(team_name, estimated_time, source)
+        log.info(f"已同步 Team {team_name} 的创建时间: {estimated_time} (来源: {source})")
+        return {
+            "success": True,
+            "created_at": estimated_time.isoformat(),
+            "source": source,
+            "message": f"已同步创建时间 (来源: {source})"
+        }
+    else:
+        return {
+            "success": False,
+            "message": "无法获取或推断创建时间"
+        }

@@ -169,6 +169,96 @@
             line-height: 1.6;
         }
 
+        /* 进度提示样式 */
+        .progress-container {
+            margin-top: 20px;
+            padding: 16px;
+            background: #f5f5f7;
+            border-radius: 12px;
+            display: none;
+        }
+
+        .progress-steps {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .progress-step {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 10px;
+            background: #fff;
+            border-radius: 8px;
+            transition: all 0.3s ease;
+        }
+
+        .progress-step.active {
+            border-left: 3px solid #000;
+        }
+
+        .progress-step.completed {
+            border-left: 3px solid #34c759;
+        }
+
+        .progress-step.error {
+            border-left: 3px solid #ff3b30;
+        }
+
+        .step-icon {
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            flex-shrink: 0;
+            background: #e5e5e5;
+            color: #86868b;
+        }
+
+        .progress-step.active .step-icon {
+            background: #000;
+            color: #fff;
+        }
+
+        .progress-step.completed .step-icon {
+            background: #34c759;
+            color: #fff;
+        }
+
+        .progress-step.error .step-icon {
+            background: #ff3b30;
+            color: #fff;
+        }
+
+        .step-icon .loading-small {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border: 2px solid #ffffff;
+            border-radius: 50%;
+            border-top-color: transparent;
+            animation: spin 0.8s linear infinite;
+        }
+
+        .step-text {
+            flex: 1;
+            font-size: 14px;
+            color: #1d1d1f;
+        }
+
+        .progress-step.active .step-text {
+            font-weight: 500;
+        }
+
+        .step-time {
+            font-size: 12px;
+            color: #86868b;
+        }
+
         .code-info {
             margin-top: 12px;
             padding: 12px 14px;
@@ -183,12 +273,125 @@
             color: #000000;
             font-weight: 600;
         }
+
+        .nav-links {
+            display: flex;
+            gap: 12px;
+            justify-content: center;
+            margin-bottom: 24px;
+        }
+
+        .nav-links a {
+            color: #000;
+            text-decoration: none;
+            padding: 8px 14px;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: all 0.2s;
+            border: 1px solid #d2d2d7;
+        }
+
+        .nav-links a:hover, .nav-links a.active {
+            background: #000;
+            color: #fff;
+        }
+
+        /* 移动端适配 */
+        @media (max-width: 640px) {
+            body {
+                padding: 12px;
+            }
+
+            .container {
+                padding: 32px 24px;
+                border-radius: 16px;
+            }
+
+            h1 {
+                font-size: 26px;
+                margin-bottom: 6px;
+            }
+
+            .subtitle {
+                font-size: 14px;
+                margin-bottom: 24px;
+            }
+
+            .nav-links {
+                flex-wrap: wrap;
+                gap: 8px;
+                margin-bottom: 20px;
+            }
+
+            .nav-links a {
+                font-size: 13px;
+                padding: 6px 12px;
+            }
+
+            input {
+                padding: 12px 14px;
+                font-size: 16px; /* 防止 iOS 自动缩放 */
+            }
+
+            .btn {
+                padding: 14px;
+                font-size: 16px;
+            }
+
+            .progress-steps {
+                gap: 8px;
+            }
+
+            .progress-step {
+                padding: 8px;
+                gap: 8px;
+            }
+
+            .step-text {
+                font-size: 13px;
+            }
+
+            .step-time {
+                font-size: 11px;
+            }
+
+            .footer {
+                margin-top: 24px;
+                font-size: 12px;
+            }
+        }
+
+        @media (max-width: 380px) {
+            .container {
+                padding: 24px 20px;
+            }
+
+            h1 {
+                font-size: 22px;
+            }
+
+            .nav-links {
+                flex-direction: column;
+                width: 100%;
+            }
+
+            .nav-links a {
+                width: 100%;
+                text-align: center;
+            }
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <h1>ChatGPT Team 席位兑换</h1>
         <p class="subtitle">输入您的邮箱和兑换码即可获得Team席位</p>
+
+        <div class="nav-links">
+            <a href="/" class="active">单个兑换</a>
+            <a href="/batch.html">批量兑换</a>
+            <a href="/user.html">用户中心</a>
+        </div>
 
         <form id="redeemForm">
             <div class="form-group">
@@ -222,6 +425,32 @@
         </form>
 
         <div id="message" class="message"></div>
+
+        <!-- 进度提示 -->
+        <div id="progressContainer" class="progress-container">
+            <div class="progress-steps" id="progressSteps">
+                <div class="progress-step" data-step="validate">
+                    <div class="step-icon">1</div>
+                    <div class="step-text">验证兑换码</div>
+                    <div class="step-time"></div>
+                </div>
+                <div class="progress-step" data-step="check">
+                    <div class="step-icon">2</div>
+                    <div class="step-text">检查席位可用性</div>
+                    <div class="step-time"></div>
+                </div>
+                <div class="progress-step" data-step="invite">
+                    <div class="step-icon">3</div>
+                    <div class="step-text">发送邀请</div>
+                    <div class="step-time"></div>
+                </div>
+                <div class="progress-step" data-step="complete">
+                    <div class="step-icon">✓</div>
+                    <div class="step-text">兑换完成</div>
+                    <div class="step-time"></div>
+                </div>
+            </div>
+        </div>
 
         <div class="footer">
             <p>兑换后，邀请邮件将发送到您的邮箱</p>
@@ -278,6 +507,45 @@
             }
         }
 
+        // 进度管理
+        const progressContainer = document.getElementById('progressContainer');
+        const progressSteps = document.querySelectorAll('.progress-step');
+
+        function resetProgress() {
+            progressSteps.forEach(step => {
+                step.classList.remove('active', 'completed', 'error');
+                const icon = step.querySelector('.step-icon');
+                const time = step.querySelector('.step-time');
+                icon.innerHTML = step.dataset.step === 'complete' ? '✓' : Array.from(progressSteps).indexOf(step) + 1;
+                time.textContent = '';
+            });
+            progressContainer.style.display = 'none';
+        }
+
+        function updateProgress(stepName, status, message = '') {
+            const step = document.querySelector(`[data-step="${stepName}"]`);
+            if (!step) return;
+
+            progressContainer.style.display = 'block';
+
+            // 移除所有状态
+            step.classList.remove('active', 'completed', 'error');
+
+            // 添加新状态
+            if (status === 'active') {
+                step.classList.add('active');
+                step.querySelector('.step-icon').innerHTML = '<span class="loading-small"></span>';
+            } else if (status === 'completed') {
+                step.classList.add('completed');
+                step.querySelector('.step-icon').innerHTML = '✓';
+                step.querySelector('.step-time').textContent = message;
+            } else if (status === 'error') {
+                step.classList.add('error');
+                step.querySelector('.step-icon').innerHTML = '✗';
+                step.querySelector('.step-time').textContent = message;
+            }
+        }
+
         // 提交表单
         form.addEventListener('submit', async function(e) {
             e.preventDefault();
@@ -290,11 +558,18 @@
                 return;
             }
 
+            // 重置进度
+            resetProgress();
+
             // 禁用按钮
             submitBtn.disabled = true;
             submitBtn.innerHTML = '<span class="loading"></span>兑换中...';
 
             try {
+                // 步骤 1: 验证兑换码
+                updateProgress('validate', 'active');
+                await new Promise(resolve => setTimeout(resolve, 300));
+
                 const response = await fetch('/api/redeem', {
                     method: 'POST',
                     headers: {
@@ -306,13 +581,41 @@
                 const result = await response.json();
 
                 if (result.success) {
+                    // 模拟进度步骤
+                    updateProgress('validate', 'completed', '已验证');
+                    await new Promise(resolve => setTimeout(resolve, 200));
+
+                    updateProgress('check', 'active');
+                    await new Promise(resolve => setTimeout(resolve, 300));
+                    updateProgress('check', 'completed', '席位充足');
+                    await new Promise(resolve => setTimeout(resolve, 200));
+
+                    updateProgress('invite', 'active');
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                    updateProgress('invite', 'completed', '已发送');
+                    await new Promise(resolve => setTimeout(resolve, 200));
+
+                    updateProgress('complete', 'completed', '成功');
+
                     showMessage(result.message, 'success');
                     form.reset();
                     codeInfo.style.display = 'none';
                 } else {
+                    // 根据错误类型更新进度
+                    if (result.error.includes('兑换码')) {
+                        updateProgress('validate', 'error', '验证失败');
+                    } else if (result.error.includes('席位')) {
+                        updateProgress('validate', 'completed', '已验证');
+                        updateProgress('check', 'error', '席位不足');
+                    } else {
+                        updateProgress('validate', 'completed', '已验证');
+                        updateProgress('check', 'completed', '席位充足');
+                        updateProgress('invite', 'error', '发送失败');
+                    }
                     showMessage(result.error, 'error');
                 }
             } catch (error) {
+                updateProgress('validate', 'error', '网络错误');
                 showMessage(`网络错误: ${error.message}`, 'error');
             } finally {
                 // 恢复按钮

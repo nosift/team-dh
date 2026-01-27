@@ -84,6 +84,23 @@ class Database:
                 # 默认 1 (启用自动转移) - 保持向后兼容
                 cursor.execute("ALTER TABLE redemption_codes ADD COLUMN auto_transfer_enabled INTEGER DEFAULT 1")
                 log.info("已添加 auto_transfer_enabled 字段到 redemption_codes 表（默认启用）", icon="upgrade")
+            if "group_name" not in cols:
+                cursor.execute("ALTER TABLE redemption_codes ADD COLUMN group_name VARCHAR(100)")
+                log.info("已添加 group_name 字段到 redemption_codes 表", icon="upgrade")
+
+            # 创建分组表
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS code_groups (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name VARCHAR(100) UNIQUE NOT NULL,
+                    description TEXT,
+                    color VARCHAR(20) DEFAULT '#000000',
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+            # 创建索引
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_codes_group ON redemption_codes(group_name)")
 
             # 创建兑换记录表
             cursor.execute("""
@@ -112,6 +129,19 @@ class Database:
                     last_updated DATETIME DEFAULT CURRENT_TIMESTAMP
                 )
             """)
+
+            # 添加 Team 创建时间字段
+            cursor.execute("PRAGMA table_info(teams_stats)")
+            teams_stats_cols = {row["name"] for row in cursor.fetchall()}
+            if "created_at" not in teams_stats_cols:
+                cursor.execute("ALTER TABLE teams_stats ADD COLUMN created_at DATETIME")
+                log.info("已添加 created_at 字段到 teams_stats 表")
+            if "first_seen_at" not in teams_stats_cols:
+                cursor.execute("ALTER TABLE teams_stats ADD COLUMN first_seen_at DATETIME DEFAULT CURRENT_TIMESTAMP")
+                log.info("已添加 first_seen_at 字段到 teams_stats 表")
+            if "created_at_source" not in teams_stats_cols:
+                cursor.execute("ALTER TABLE teams_stats ADD COLUMN created_at_source VARCHAR(20)")
+                log.info("已添加 created_at_source 字段到 teams_stats 表")
 
             # 成员租约：用于"按月到期自动转移到新 Team"
             cursor.execute("""
@@ -441,31 +471,6 @@ class Database:
             row = cursor.fetchone()
             return dict(row) if row else None
 
-    def delete_member_lease(self, email: str) -> bool:
-        """删除租约记录
-
-        Args:
-            email: 邮箱地址
-
-        Returns:
-            bool: 是否删除成功
-        """
-        email = (email or "").strip().lower()
-        if not email:
-            return False
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("DELETE FROM member_leases WHERE email = ?", (email,))
-            # 同时添加删除事件
-            if cursor.rowcount > 0:
-                self.add_member_lease_event(
-                    email=email,
-                    action="deleted",
-                    from_team=None,
-                    to_team=None,
-                    message="租约已被手动删除"
-                )
-            return cursor.rowcount > 0
 
     def mark_member_lease_transferring(self, email: str) -> bool:
         """标记租约为转移中状态"""
@@ -541,6 +546,23 @@ class Database:
                 WHERE email = ?
             """,
                 (next_attempt_at.isoformat(sep=" ", timespec="seconds"), message, email),
+            )
+
+    def update_member_lease_status(self, email: str, status: str):
+        """更新租约状态"""
+        email = (email or "").strip().lower()
+        if not email:
+            return
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                UPDATE member_leases
+                SET status = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE email = ?
+            """,
+                (status, email),
             )
 
     def list_member_leases(self, *, limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
@@ -1098,6 +1120,29 @@ class Database:
             )
             return [dict(row) for row in cursor.fetchall()]
 
+    def get_redemptions_by_email(self, email: str, limit: int = 20) -> List[Dict[str, Any]]:
+        """根据邮箱查询兑换记录"""
+        email = (email or "").strip().lower()
+        if not email:
+            return []
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT
+                    r.*,
+                    rc.code,
+                    rc.team_name
+                FROM redemptions r
+                JOIN redemption_codes rc ON r.code_id = rc.id
+                WHERE LOWER(r.email) = ?
+                ORDER BY r.redeemed_at DESC
+                LIMIT ?
+            """,
+                (email, limit),
+            )
+            return [dict(row) for row in cursor.fetchall()]
+
     def bulk_delete_redemptions(self, *, team_names: Optional[List[str]] = None) -> int:
         """批量删除兑换记录，返回删除条数。"""
         names = [n for n in (team_names or []) if n]
@@ -1260,6 +1305,258 @@ class Database:
                 "today_successful_redemptions": today_successful_redemptions,
                 "today_failed_redemptions": today_failed_redemptions,
             }
+
+    # ==================== Team 创建时间管理 ====================
+
+    def update_team_created_at(self, team_name: str, created_at: datetime, source: str = "api"):
+        """更新 Team 创建时间
+
+        Args:
+            team_name: Team 名称
+            created_at: 创建时间
+            source: 数据来源 (api/estimated/manual)
+        """
+        with self.get_connection() as conn:
+            conn.execute("""
+                UPDATE teams_stats
+                SET created_at = ?, created_at_source = ?
+                WHERE team_name = ?
+            """, (created_at, source, team_name))
+
+    def get_team_created_at(self, team_name: str) -> Optional[Dict[str, Any]]:
+        """获取 Team 创建时间"""
+        with self.get_connection() as conn:
+            cursor = conn.execute("""
+                SELECT created_at, first_seen_at, created_at_source
+                FROM teams_stats
+                WHERE team_name = ?
+            """, (team_name,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def get_earliest_redemption(self, team_name: str) -> Optional[datetime]:
+        """获取最早的兑换记录时间"""
+        with self.get_connection() as conn:
+            cursor = conn.execute("""
+                SELECT MIN(redeemed_at) as earliest
+                FROM redemptions
+                WHERE team_name = ?
+            """, (team_name,))
+            row = cursor.fetchone()
+            if row and row["earliest"]:
+                return datetime.fromisoformat(row["earliest"])
+            return None
+
+    def get_earliest_lease(self, team_name: str) -> Optional[datetime]:
+        """获取最早的成员加入时间"""
+        with self.get_connection() as conn:
+            cursor = conn.execute("""
+                SELECT MIN(joined_at) as earliest
+                FROM member_leases
+                WHERE team_name = ? AND joined_at IS NOT NULL
+            """, (team_name,))
+            row = cursor.fetchone()
+            if row and row["earliest"]:
+                return datetime.fromisoformat(row["earliest"])
+            return None
+
+    # ==================== 兑换码分组管理 ====================
+
+    def list_code_groups(self) -> List[Dict[str, Any]]:
+        """获取所有分组及其兑换码数量"""
+        with self.get_connection() as conn:
+            cursor = conn.execute("""
+                SELECT
+                    g.id,
+                    g.name,
+                    g.description,
+                    g.color,
+                    g.created_at,
+                    COUNT(c.id) as code_count,
+                    SUM(CASE WHEN c.status = 'active' THEN 1 ELSE 0 END) as active_count,
+                    SUM(CASE WHEN c.status = 'used_up' THEN 1 ELSE 0 END) as used_up_count
+                FROM code_groups g
+                LEFT JOIN redemption_codes c ON c.group_name = g.name AND c.status != 'deleted'
+                GROUP BY g.id, g.name, g.description, g.color, g.created_at
+                ORDER BY g.created_at DESC
+            """)
+            return [dict(row) for row in cursor.fetchall()]
+
+    def get_code_group(self, group_id: int) -> Optional[Dict[str, Any]]:
+        """获取单个分组信息"""
+        with self.get_connection() as conn:
+            cursor = conn.execute("""
+                SELECT * FROM code_groups WHERE id = ?
+            """, (group_id,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def get_code_group_by_name(self, name: str) -> Optional[Dict[str, Any]]:
+        """根据名称获取分组"""
+        with self.get_connection() as conn:
+            cursor = conn.execute("""
+                SELECT * FROM code_groups WHERE name = ?
+            """, (name,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def create_code_group(self, name: str, description: str = "", color: str = "#000000") -> int:
+        """创建兑换码分组
+
+        Args:
+            name: 分组名称（唯一）
+            description: 分组描述
+            color: 分组颜色（十六进制）
+
+        Returns:
+            分组 ID
+
+        Raises:
+            sqlite3.IntegrityError: 如果分组名称已存在
+        """
+        with self.get_connection() as conn:
+            cursor = conn.execute("""
+                INSERT INTO code_groups (name, description, color)
+                VALUES (?, ?, ?)
+            """, (name, description, color))
+            return cursor.lastrowid
+
+    def update_code_group(self, group_id: int, name: str = None, description: str = None, color: str = None) -> bool:
+        """更新分组信息
+
+        Args:
+            group_id: 分组 ID
+            name: 新名称（可选）
+            description: 新描述（可选）
+            color: 新颜色（可选）
+
+        Returns:
+            是否更新成功
+        """
+        updates = []
+        params = []
+
+        if name is not None:
+            updates.append("name = ?")
+            params.append(name)
+        if description is not None:
+            updates.append("description = ?")
+            params.append(description)
+        if color is not None:
+            updates.append("color = ?")
+            params.append(color)
+
+        if not updates:
+            return False
+
+        params.append(group_id)
+
+        with self.get_connection() as conn:
+            cursor = conn.execute(f"""
+                UPDATE code_groups
+                SET {', '.join(updates)}
+                WHERE id = ?
+            """, params)
+            return cursor.rowcount > 0
+
+    def delete_code_group(self, group_id: int, clear_codes: bool = False) -> bool:
+        """删除分组
+
+        Args:
+            group_id: 分组 ID
+            clear_codes: 是否同时清除该分组下所有兑换码的分组标记
+
+        Returns:
+            是否删除成功
+        """
+        with self.get_connection() as conn:
+            # 获取分组名称
+            cursor = conn.execute("SELECT name FROM code_groups WHERE id = ?", (group_id,))
+            row = cursor.fetchone()
+            if not row:
+                return False
+
+            group_name = row["name"]
+
+            # 清除或保留兑换码的分组标记
+            if clear_codes:
+                conn.execute("""
+                    UPDATE redemption_codes
+                    SET group_name = NULL
+                    WHERE group_name = ?
+                """, (group_name,))
+
+            # 删除分组
+            cursor = conn.execute("DELETE FROM code_groups WHERE id = ?", (group_id,))
+            return cursor.rowcount > 0
+
+    def batch_update_code_group(self, code_ids: List[int], group_name: Optional[str]) -> int:
+        """批量更新兑换码的分组
+
+        Args:
+            code_ids: 兑换码 ID 列表
+            group_name: 分组名称（None 表示移除分组）
+
+        Returns:
+            更新的兑换码数量
+        """
+        if not code_ids:
+            return 0
+
+        with self.get_connection() as conn:
+            placeholders = ','.join('?' * len(code_ids))
+            cursor = conn.execute(f"""
+                UPDATE redemption_codes
+                SET group_name = ?
+                WHERE id IN ({placeholders})
+            """, [group_name] + code_ids)
+            return cursor.rowcount
+
+    def list_codes_with_group(
+        self,
+        team_name: Optional[str] = None,
+        status: Optional[str] = None,
+        group_name: Optional[str] = None,
+        include_deleted: bool = False,
+    ) -> List[Dict[str, Any]]:
+        """列出兑换码（支持分组筛选）
+
+        Args:
+            team_name: Team 名称筛选
+            status: 状态筛选
+            group_name: 分组名称筛选（None 表示不筛选，"" 表示未分组）
+            include_deleted: 是否包含已删除的兑换码
+
+        Returns:
+            兑换码列表
+        """
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+
+            query = "SELECT * FROM redemption_codes WHERE 1=1"
+            params = []
+
+            if team_name:
+                query += " AND team_name = ?"
+                params.append(team_name)
+
+            if status:
+                query += " AND status = ?"
+                params.append(status)
+            elif not include_deleted:
+                query += " AND status != 'deleted'"
+
+            if group_name is not None:
+                if group_name == "":
+                    query += " AND (group_name IS NULL OR group_name = '')"
+                else:
+                    query += " AND group_name = ?"
+                    params.append(group_name)
+
+            query += " ORDER BY created_at DESC"
+
+            cursor.execute(query, params)
+            return [dict(row) for row in cursor.fetchall()]
 
 
 # 单例实例

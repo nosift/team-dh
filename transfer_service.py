@@ -1,8 +1,9 @@
 """
 按月到期自动转移到新 Team
 
-- 不改变现有兑换逻辑，只在后台到期后尝试给用户发送“新 Team 邀请”
+- 不改变现有兑换逻辑，只在后台到期后尝试给用户发送"新 Team 邀请"
 - 默认关闭（AUTO_TRANSFER_ENABLED=false），避免对现有部署产生影响
+- 优化：事务保护、重试限制、改进席位检查
 """
 
 from __future__ import annotations
@@ -16,21 +17,14 @@ from datetime import datetime, timedelta
 from database import db
 from logger import log
 import config
-from team_service import invite_single_email, get_invite_status_for_email, remove_member_by_email, get_member_info_for_email
+from config import env_bool
+from team_service import invite_single_email, get_invite_status_for_email, remove_member_by_email, get_member_info_for_email, batch_invite_to_team, get_team_stats
 from redemption_service import RedemptionService
 from date_utils import add_months_same_day, parse_datetime_loose
 
 
-def _env_bool(name: str, default: bool = False) -> bool:
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    v = raw.strip().lower()
-    if v in {"1", "true", "yes", "y", "on"}:
-        return True
-    if v in {"0", "false", "no", "n", "off"}:
-        return False
-    return default
+# 最大重试次数（超过后标记为 failed）
+MAX_TRANSFER_ATTEMPTS = int(os.getenv("MAX_TRANSFER_ATTEMPTS", "10"))
 
 
 def _expires_at_for_new_term(now: datetime) -> datetime:
@@ -42,34 +36,62 @@ def _expires_at_for_new_term(now: datetime) -> datetime:
 def _pick_next_team(*, current_account_id: str | None, current_team_name: str | None, email: str) -> list[dict]:
     """
     生成候选 Team 列表（按优先顺序）。
-    优先“当前 Team 的下一个 Team”，再 round-robin。
+    优化：按可用席位比例排序，优先选择空闲 Team。
     """
     teams = [t for t in (config.TEAMS or []) if (t.get("auth_token") or "").strip() and (t.get("account_id") or "").strip()]
     if len(teams) <= 1:
         return []
 
-    def idx_of() -> int | None:
-        if current_account_id:
-            for i, t in enumerate(teams):
-                if (t.get("account_id") or "") == current_account_id:
-                    return i
-        if current_team_name:
-            for i, t in enumerate(teams):
-                if (t.get("name") or "") == current_team_name:
-                    return i
-        return None
-
-    cur_idx = idx_of()
-    start = (cur_idx + 1) if cur_idx is not None else (abs(hash(email)) % len(teams))
-    ordered: list[dict] = []
-    for i in range(len(teams)):
-        t = teams[(start + i) % len(teams)]
+    # 过滤掉当前 Team
+    candidates = []
+    for t in teams:
         if current_account_id and (t.get("account_id") or "") == current_account_id:
             continue
         if current_team_name and (t.get("name") or "") == current_team_name:
             continue
-        ordered.append(t)
-    return ordered
+        candidates.append(t)
+
+    if not candidates:
+        return []
+
+    # 获取每个 Team 的席位信息并排序
+    team_with_stats = []
+    for t in candidates:
+        team_name = t.get("name") or ""
+        try:
+            stats = get_team_stats(team_name)
+            total = stats.get("total", 0)
+            used = stats.get("used", 0)
+            pending = stats.get("pending", 0)
+            available = total - used - pending
+
+            # 计算可用席位比例（用于排序）
+            if total > 0:
+                availability_ratio = available / total
+            else:
+                availability_ratio = 0
+
+            team_with_stats.append({
+                "team": t,
+                "available": available,
+                "ratio": availability_ratio,
+                "total": total
+            })
+        except Exception as e:
+            log.warning(f"获取 Team {team_name} 席位信息失败: {e}")
+            # 失败的 Team 放到最后
+            team_with_stats.append({
+                "team": t,
+                "available": 0,
+                "ratio": 0,
+                "total": 0
+            })
+
+    # 按可用席位比例降序排序（比例高的优先）
+    team_with_stats.sort(key=lambda x: (x["ratio"], x["available"]), reverse=True)
+
+    # 返回排序后的 Team 列表
+    return [item["team"] for item in team_with_stats]
 
 
 def _next_attempt_time(attempts: int) -> datetime:
@@ -131,7 +153,7 @@ def run_transfer_once(*, limit: int = 20) -> int:
 
 def _sync_joined_leases(*, limit: int = 50, include_not_due: bool = False, record_events: bool = True):
     """
-    将 member_leases 中 awaiting_join 的记录，尽量同步为“已加入”的真实时间。
+    将 member_leases 中 pending 的记录，尽量同步为"已加入"的真实时间。
     以当前 Team 的 invites 中 accepted/completed 的时间字段为准。
     """
     lock_by = uuid.uuid4().hex
@@ -147,7 +169,7 @@ def _sync_joined_leases(*, limit: int = 50, include_not_due: bool = False, recor
     not_joined = 0
     skipped = 0
     try:
-        rows = db.list_member_leases_awaiting_join_with_due(limit=limit, include_not_due=include_not_due)
+        rows = db.list_member_leases_pending_join_with_due(limit=limit, include_not_due=include_not_due)
         if not rows:
             return {
                 "checked": 0,
@@ -236,7 +258,7 @@ def _sync_joined_leases(*, limit: int = 50, include_not_due: bool = False, recor
                         except Exception:
                             join_at = None
                     if not join_at:
-                        allow_approx = _env_bool("AUTO_TRANSFER_ALLOW_APPROX_JOIN_AT", False)
+                        allow_approx = env_bool("AUTO_TRANSFER_ALLOW_APPROX_JOIN_AT", False)
                         if allow_approx:
                             # 成员列表没有明确加入时间字段时，用当前时间近似（并在事件中标注）
                             join_at = datetime.now()
@@ -251,14 +273,14 @@ def _sync_joined_leases(*, limit: int = 50, include_not_due: bool = False, recor
                         else:
                             member_no_time += 1
                             if not include_not_due:
-                                _defer_join_sync(lease=lease, message="成员列表未提供加入时间字段，未写入 join_at（保持 awaiting_join；可手动录入 join_at / 在后台点“近似加入” / 或开启 AUTO_TRANSFER_ALLOW_APPROX_JOIN_AT）", reason="member_no_time")
+                                _defer_join_sync(lease=lease, message="成员列表未提供加入时间字段，未写入 joined_at（保持 pending；可手动录入 joined_at / 在后台点'近似加入' / 或开启 AUTO_TRANSFER_ALLOW_APPROX_JOIN_AT）", reason="member_no_time")
                             if record_events:
                                 db.add_member_lease_event(
                                     email=email,
                                     action="sync_member_no_time",
                                     from_team=team_name,
                                     to_team=None,
-                                    message="成员列表未提供加入时间字段，未写入 join_at（保持 awaiting_join；可手动录入 join_at / 在后台点“近似加入” / 或开启 AUTO_TRANSFER_ALLOW_APPROX_JOIN_AT）",
+                                    message="成员列表未提供加入时间字段，未写入 joined_at（保持 pending；可手动录入 joined_at / 在后台点'近似加入' / 或开启 AUTO_TRANSFER_ALLOW_APPROX_JOIN_AT）",
                                 )
                             continue
                 elif mi.get("error"):
@@ -289,7 +311,7 @@ def _sync_joined_leases(*, limit: int = 50, include_not_due: bool = False, recor
                 continue
 
             expires_at = _expires_at_for_new_term(join_at)
-            db.update_member_lease_joined(email=email, join_at=join_at, expires_at=expires_at, from_team=team_name)
+            db.update_member_lease_joined(email=email, joined_at=join_at, expires_at=expires_at, from_team=team_name)
             synced += 1
         return {
             "checked": checked,
@@ -318,8 +340,8 @@ def _sync_joined_lease_for_email(email: str, *, record_events: bool = True) -> d
     if not lease:
         return {"checked": 0, "synced": 0, "reason": "lease_not_found"}
 
-    if (lease.get("status") or "").strip() != "awaiting_join":
-        return {"checked": 0, "synced": 0, "reason": "not_awaiting_join"}
+    if (lease.get("status") or "").strip() != "pending":
+        return {"checked": 0, "synced": 0, "reason": "not_pending"}
 
     team_name = (lease.get("team_name") or "").strip()
     team_cfg = config.resolve_team(team_name) or {}
@@ -387,7 +409,7 @@ def _sync_joined_lease_for_email(email: str, *, record_events: bool = True) -> d
                     join_at = None
 
             if not join_at:
-                allow_approx = _env_bool("AUTO_TRANSFER_ALLOW_APPROX_JOIN_AT", False)
+                allow_approx = env_bool("AUTO_TRANSFER_ALLOW_APPROX_JOIN_AT", False)
                 if allow_approx:
                     join_at = datetime.now()
                     db.add_member_lease_event(
@@ -432,13 +454,13 @@ def _sync_joined_lease_for_email(email: str, *, record_events: bool = True) -> d
         return {"checked": 1, "synced": 0, "reason": "not_joined"}
 
     expires_at = _expires_at_for_new_term(join_at)
-    db.update_member_lease_joined(email=target, join_at=join_at, expires_at=expires_at, from_team=team_name)
+    db.update_member_lease_joined(email=target, joined_at=join_at, expires_at=expires_at, from_team=team_name)
     return {"checked": 1, "synced": 1, "reason": "synced"}
 
 
 def sync_joined_leases_once(*, limit: int = 50) -> int:
     """
-    管理后台手动触发：同步 awaiting_join 的 join_at。
+    管理后台手动触发：同步 pending 的 joined_at。
     返回本次成功同步的条数（粗略统计）。
     """
     result = _sync_joined_leases(limit=limit, include_not_due=True, record_events=True)
@@ -480,9 +502,9 @@ def run_transfer_for_email(email: str) -> dict:
     if not lease:
         return {"success": False, "moved": 0, "message": "租约不存在"}
 
-    if (lease.get("status") or "").strip() == "awaiting_join":
-        hint = "仍未写入 join_at（awaiting_join），不会参与到期转移；请先“同步加入时间”/点“近似加入”/或手动录入 join_at。"
-        return {"success": True, "moved": 0, "message": hint, "data": {"status": "awaiting_join"}}
+    if (lease.get("status") or "").strip() == "pending":
+        hint = '仍未写入 joined_at（pending），不会参与到期转移；请先"同步加入时间"/点"近似加入"/或手动录入 joined_at。'
+        return {"success": True, "moved": 0, "message": hint, "data": {"status": "pending"}}
 
     ok = _process_transfer_for_lease(lease, only_if_due=True)
     if ok:
@@ -500,13 +522,183 @@ def run_transfer_for_email(email: str) -> dict:
     return {"success": True, "moved": 0, "message": "未转移：可能未到期或转移失败（请看事件/最后错误）"}
 
 
+def force_transfer_for_email(email: str, *, reason: str = "") -> dict:
+    """
+    强制换车：不检查到期时间，直接转移到新 Team。
+    用于质保换车场景。
+    返回：{success, moved, message, new_team}
+    """
+    target = (email or "").strip().lower()
+    if not target:
+        return {"success": False, "moved": 0, "message": "email 不能为空"}
+
+    lease = db.get_member_lease(target)
+    if not lease:
+        return {"success": False, "moved": 0, "message": "租约不存在"}
+
+    current_team_name = lease.get("team_name")
+
+    # 记录换车原因
+    db.add_member_lease_event(
+        email=target,
+        action="transfer_request",
+        from_team=current_team_name,
+        to_team=None,
+        message=reason or "用户申请换车"
+    )
+
+    # 强制转移（不检查到期时间）
+    ok, new_team = _process_transfer_for_lease_force(lease)
+
+    if ok:
+        return {
+            "success": True,
+            "moved": 1,
+            "message": f"已从 {current_team_name} 换车到 {new_team}",
+            "new_team": new_team
+        }
+    else:
+        return {
+            "success": False,
+            "moved": 0,
+            "message": "换车失败：没有可用的新 Team 或转移过程出错"
+        }
+
+
+def _process_transfer_for_lease_force(lease: dict) -> tuple:
+    """强制执行转移，不检查到期时间。返回 (success, new_team_name)"""
+    email = (lease.get("email") or "").strip().lower()
+    if not email:
+        return False, None
+
+    if not db.mark_member_lease_transferring(email):
+        return False, None
+
+    current_team_name = lease.get("team_name")
+    current_account_id = lease.get("team_account_id")
+
+    candidates = _pick_next_team(
+        current_account_id=current_account_id,
+        current_team_name=current_team_name,
+        email=email,
+    )
+
+    if not candidates:
+        msg = "没有可用的新 Team（请至少配置 2 个 Team）"
+        db.update_member_lease_transfer_failure(
+            email=email,
+            message=msg,
+            next_attempt_at=_next_attempt_time(int(lease.get("attempts") or 0))
+        )
+        db.add_member_lease_event(
+            email=email,
+            action="transfer_failed",
+            from_team=current_team_name,
+            to_team=None,
+            message=msg
+        )
+        return False, None
+
+    # 尝试转移到候选 Team
+    for team_cfg in candidates:
+        new_team_name = team_cfg.get("name") or team_cfg.get("team_name") or "unknown"
+        new_account_id = team_cfg.get("account_id")
+
+        # 改进的席位检查
+        try:
+            stats = get_team_stats(new_team_name)
+            total = stats.get("total", 0)
+            used = stats.get("used", 0)
+            pending = stats.get("pending", 0)
+            available = total - used - pending
+
+            if available < 1:
+                log.info(f"跳过 Team {new_team_name}: 无可用席位（总:{total}, 已用:{used}, 待定:{pending}）")
+                continue
+        except Exception as e:
+            log.warning(f"获取 Team {new_team_name} 席位信息失败: {e}")
+            continue
+
+        # 先从旧 Team 移除
+        try:
+            old_cfg = config.resolve_team(current_team_name)
+            if old_cfg:
+                from team_service import remove_member_by_email
+                remove_member_by_email(old_cfg, email)
+        except Exception as rm_err:
+            log.warning(f"从旧 Team 移除失败（继续尝试邀请新 Team）: {rm_err}")
+
+        # 邀请到新 Team
+        try:
+            from team_service import batch_invite_to_team
+            result = batch_invite_to_team([email], team_cfg)
+            if email in result.get("success", []):
+                # 更新租约
+                now = datetime.now()
+                term_months = int(os.getenv("AUTO_TRANSFER_TERM_MONTHS", "1") or 1)
+                from date_utils import add_months_same_day
+                expires_at = add_months_same_day(now, max(1, min(24, term_months)))
+
+                db.update_member_lease_transfer_success(
+                    email=email,
+                    new_team_name=new_team_name,
+                    new_team_account_id=new_account_id,
+                    invited_at=now,
+                    expires_at=expires_at,
+                )
+
+                db.add_member_lease_event(
+                    email=email,
+                    action="transferred",
+                    from_team=current_team_name,
+                    to_team=new_team_name,
+                    message=f"质保换车成功，新到期日 {expires_at.date().isoformat()}"
+                )
+
+                return True, new_team_name
+        except Exception as inv_err:
+            log.warning(f"邀请到新 Team {new_team_name} 失败: {inv_err}")
+            continue
+
+    # 所有候选都失败
+    msg = "所有候选 Team 邀请均失败"
+    db.update_member_lease_transfer_failure(
+        email=email,
+        message=msg,
+        next_attempt_at=_next_attempt_time(int(lease.get("attempts") or 0))
+    )
+    db.add_member_lease_event(
+        email=email,
+        action="transfer_failed",
+        from_team=current_team_name,
+        to_team=None,
+        message=msg
+    )
+    return False, None
+
+
 def _process_transfer_for_lease(lease: dict, *, only_if_due: bool = True) -> bool:
     email = (lease.get("email") or "").strip().lower()
     if not email:
         return False
 
-    # 未同步 join_at 不参与到期转移
-    if (lease.get("status") or "").strip() == "awaiting_join":
+    # 未同步 joined_at 不参与到期转移
+    if (lease.get("status") or "").strip() == "pending":
+        return False
+
+    # 检查是否超过最大重试次数
+    attempts = int(lease.get("attempts") or 0)
+    if attempts >= MAX_TRANSFER_ATTEMPTS:
+        msg = f"已达到最大重试次数 ({MAX_TRANSFER_ATTEMPTS})，标记为失败"
+        db.update_member_lease_status(email, "failed")
+        db.add_member_lease_event(
+            email=email,
+            action="transfer_failed",
+            from_team=lease.get("team_name"),
+            to_team=None,
+            message=msg
+        )
+        log.warning(f"转移失败（超过最大重试次数）: {email}", icon="warning")
         return False
 
     if only_if_due:
@@ -534,7 +726,7 @@ def _process_transfer_for_lease(lease: dict, *, only_if_due: bool = True) -> boo
 
     if not candidates:
         msg = "没有可用的新 Team（请至少配置 2 个 Team）"
-        db.update_member_lease_transfer_failure(email=email, message=msg, next_attempt_at=_next_attempt_time(int(lease.get("attempts") or 0)))
+        db.update_member_lease_transfer_failure(email=email, message=msg, next_attempt_at=_next_attempt_time(attempts))
         db.add_member_lease_event(email=email, action="transfer_failed", from_team=current_team_name, to_team=None, message=msg)
         return False
 
@@ -542,14 +734,31 @@ def _process_transfer_for_lease(lease: dict, *, only_if_due: bool = True) -> boo
     last_err = ""
 
     kick_old = (
-        _env_bool("AUTO_TRANSFER_AUTO_LEAVE_OLD_TEAM", False)
-        or _env_bool("AUTO_TRANSFER_KICK_OLD_TEAM", False)
+        env_bool("AUTO_TRANSFER_AUTO_LEAVE_OLD_TEAM", False)
+        or env_bool("AUTO_TRANSFER_KICK_OLD_TEAM", False)
     )
     kicked_old = False
 
     for t in candidates:
         team_name = t.get("name") or ""
         account_id = t.get("account_id") or ""
+
+        # 改进的席位检查：检查 available >= pending_invites + 1
+        try:
+            stats = get_team_stats(team_name)
+            total = stats.get("total", 0)
+            used = stats.get("used", 0)
+            pending = stats.get("pending", 0)
+            available = total - used - pending
+
+            if available < 1:
+                last_err = f"Team {team_name} 无可用席位（总:{total}, 已用:{used}, 待定:{pending}）"
+                log.info(f"跳过 Team {team_name}: {last_err}")
+                continue
+        except Exception as e:
+            last_err = f"获取 Team {team_name} 席位信息失败: {e}"
+            log.warning(last_err)
+            continue
 
         if kick_old and (not kicked_old) and current_team_name:
             old_cfg = config.resolve_team(current_team_name) or {}
@@ -564,11 +773,6 @@ def _process_transfer_for_lease(lease: dict, *, only_if_due: bool = True) -> boo
             kicked_old = True
             db.add_member_lease_event(email=email, action="left_old_team", from_team=current_team_name, to_team=None, message="已退出旧 Team")
 
-        seat_check = RedemptionService._check_team_seats(team_name)
-        if not seat_check.get("available"):
-            last_err = seat_check.get("message") or "无可用席位"
-            continue
-
         ok, msg = invite_single_email(email, t)
         if ok:
             now = datetime.now()
@@ -577,7 +781,7 @@ def _process_transfer_for_lease(lease: dict, *, only_if_due: bool = True) -> boo
                 email=email,
                 new_team_name=team_name,
                 new_team_account_id=account_id,
-                start_at=now,
+                invited_at=now,
                 expires_at=expires_at,
             )
             db.add_member_lease_event(
@@ -615,7 +819,7 @@ def start_transfer_worker():
         return
     _worker_started = True
 
-    if not _env_bool("AUTO_TRANSFER_ENABLED", False):
+    if not env_bool("AUTO_TRANSFER_ENABLED", False):
         log.info("AUTO_TRANSFER_ENABLED=false，自动转移功能未启用", icon="info")
         return
 

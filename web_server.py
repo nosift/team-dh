@@ -16,6 +16,7 @@ import ipaddress
 from team_service import get_member_info_for_email
 from transfer_scheduler import start_transfer_worker
 from transfer_scheduler import run_transfer_once, sync_joined_leases_once, sync_joined_leases_once_detailed, run_transfer_for_email, sync_joined_lease_for_email_once_detailed
+from monitor import monitor, run_monitor_loop
 
 
 app = Flask(__name__)
@@ -39,6 +40,11 @@ ENABLE_ADMIN = config.get("web.enable_admin", True)
 
 # 后台：按月到期自动转移（默认关闭，通过 AUTO_TRANSFER_ENABLED=true 开启）
 start_transfer_worker()
+
+# 后台：监控和告警（默认开启，通过 MONITOR_ENABLED=false 关闭）
+if os.getenv("MONITOR_ENABLED", "true").lower() != "false":
+    monitor_interval = int(os.getenv("MONITOR_INTERVAL", "300"))  # 默认 5 分钟
+    run_monitor_loop(interval=monitor_interval)
 
 
 _last_config_reload_sig: tuple[float, float, int, int] | None = None
@@ -193,6 +199,20 @@ def index():
         return f.read()
 
 
+@app.route("/batch.html")
+def batch_page():
+    """批量兑换页面"""
+    with open("static/batch.html", "r", encoding="utf-8") as f:
+        return f.read()
+
+
+@app.route("/user.html")
+def user_page():
+    """用户中心页面"""
+    with open("static/user.html", "r", encoding="utf-8") as f:
+        return f.read()
+
+
 @app.route("/api/redeem", methods=["POST"])
 def redeem():
     """兑换接口"""
@@ -229,6 +249,224 @@ def redeem():
 
     except Exception as e:
         log.error(f"兑换接口错误: {e}")
+        return jsonify({"success": False, "error": f"系统错误: {str(e)}"}), 500
+
+
+@app.route("/api/redeem/batch", methods=["POST"])
+def redeem_batch():
+    """批量兑换接口"""
+    try:
+        data = request.get_json() or {}
+
+        if not data:
+            return jsonify({"success": False, "error": "无效的请求数据"}), 400
+
+        email = data.get("email", "").strip()
+        codes = data.get("codes", [])
+
+        if not email:
+            return jsonify({"success": False, "error": "邮箱不能为空"}), 400
+
+        if not codes or not isinstance(codes, list):
+            return jsonify({"success": False, "error": "兑换码列表不能为空"}), 400
+
+        # 限制单次批量兑换数量
+        if len(codes) > 20:
+            return jsonify({"success": False, "error": "单次最多兑换20个码"}), 400
+
+        # 获取客户端IP
+        ip_address = _get_client_ip()
+
+        results = []
+        success_count = 0
+        fail_count = 0
+
+        for code in codes:
+            code = (code or "").strip().upper()
+            if not code:
+                continue
+
+            result = RedemptionService.redeem(code, email, ip_address)
+            results.append({
+                "code": code,
+                "success": result.get("success", False),
+                "message": result.get("message") or result.get("error", "未知错误")
+            })
+
+            if result.get("success"):
+                success_count += 1
+            else:
+                fail_count += 1
+
+        return jsonify({
+            "success": True,
+            "total": len(results),
+            "success_count": success_count,
+            "fail_count": fail_count,
+            "results": results
+        }), 200
+
+    except Exception as e:
+        log.error(f"批量兑换接口错误: {e}")
+        return jsonify({"success": False, "error": f"系统错误: {str(e)}"}), 500
+
+
+@app.route("/api/user/status", methods=["POST"])
+def user_status():
+    """用户状态查询接口"""
+    try:
+        data = request.get_json() or {}
+        email = (data.get("email") or "").strip().lower()
+
+        if not email:
+            return jsonify({"success": False, "error": "邮箱不能为空"}), 400
+
+        # 查询租约信息
+        lease = db.get_member_lease(email)
+
+        # 查询兑换记录
+        redemptions = db.get_redemptions_by_email(email, limit=10)
+
+        if not lease and not redemptions:
+            return jsonify({
+                "success": True,
+                "found": False,
+                "message": "未找到该邮箱的记录"
+            })
+
+        # 构建响应数据
+        response = {
+            "success": True,
+            "found": True,
+            "email": email,
+            "lease": None,
+            "redemptions": []
+        }
+
+        if lease:
+            response["lease"] = {
+                "team_name": lease.get("team_name"),
+                "status": lease.get("status"),
+                "joined_at": lease.get("joined_at"),
+                "expires_at": lease.get("expires_at"),
+                "created_at": lease.get("created_at")
+            }
+
+        if redemptions:
+            response["redemptions"] = [
+                {
+                    "code": r.get("code"),
+                    "team_name": r.get("team_name"),
+                    "redeemed_at": r.get("redeemed_at"),
+                    "status": r.get("status", "success")
+                }
+                for r in redemptions
+            ]
+
+        return jsonify(response)
+
+    except Exception as e:
+        log.error(f"用户状态查询错误: {e}")
+        return jsonify({"success": False, "error": f"系统错误: {str(e)}"}), 500
+
+
+@app.route("/api/user/unbind", methods=["POST"])
+def user_unbind():
+    """用户解绑接口 - 主动退出 Team"""
+    try:
+        data = request.get_json() or {}
+        email = (data.get("email") or "").strip().lower()
+
+        if not email:
+            return jsonify({"success": False, "error": "邮箱不能为空"}), 400
+
+        # 查询当前租约
+        lease = db.get_member_lease(email)
+        if not lease:
+            return jsonify({"success": False, "error": "未找到该邮箱的 Team 记录"}), 404
+
+        team_name = lease.get("team_name")
+        if not team_name:
+            return jsonify({"success": False, "error": "无法确定当前 Team"}), 400
+
+        # 获取 Team 配置
+        team_cfg = config.resolve_team(team_name)
+        if not team_cfg:
+            return jsonify({"success": False, "error": f"Team '{team_name}' 配置不存在"}), 400
+
+        # 调用移除成员 API
+        from team_service import remove_member_by_email
+        success, message = remove_member_by_email(team_cfg, email)
+
+        if success:
+            # 更新租约状态为已解绑
+            db.update_member_lease_status(email, "unbound")
+            db.add_member_lease_event(
+                email=email,
+                action="unbind",
+                from_team=team_name,
+                to_team=None,
+                message="用户主动解绑"
+            )
+            return jsonify({
+                "success": True,
+                "message": f"已成功从 {team_name} 解绑"
+            })
+        else:
+            return jsonify({
+                "success": False,
+                "error": message or "解绑失败"
+            }), 500
+
+    except Exception as e:
+        log.error(f"用户解绑错误: {e}")
+        return jsonify({"success": False, "error": f"系统错误: {str(e)}"}), 500
+
+
+@app.route("/api/user/transfer", methods=["POST"])
+def user_transfer():
+    """用户换车接口 - 质保换车，转移到新 Team"""
+    try:
+        data = request.get_json() or {}
+        email = (data.get("email") or "").strip().lower()
+        reason = (data.get("reason") or "").strip()
+
+        if not email:
+            return jsonify({"success": False, "error": "邮箱不能为空"}), 400
+
+        # 查询当前租约
+        lease = db.get_member_lease(email)
+        if not lease:
+            return jsonify({"success": False, "error": "未找到该邮箱的 Team 记录"}), 404
+
+        current_team = lease.get("team_name")
+        current_status = lease.get("status", "")
+
+        # 检查状态：只允许 active 状态的用户换车
+        if current_status not in ["active", "pending", "awaiting_join"]:
+            return jsonify({
+                "success": False,
+                "error": f"当前状态 ({current_status}) 不支持换车"
+            }), 400
+
+        # 调用转移服务（强制转移，不检查到期时间）
+        from transfer_service import force_transfer_for_email
+        result = force_transfer_for_email(email, reason=reason or "用户申请质保换车")
+
+        if result.get("success") and result.get("moved", 0) > 0:
+            new_team = result.get("new_team", "新 Team")
+            return jsonify({
+                "success": True,
+                "message": f"已成功从 {current_team} 换车到 {new_team}，邀请邮件已发送"
+            })
+        else:
+            return jsonify({
+                "success": False,
+                "error": result.get("message", "换车失败，请稍后重试或联系管理员")
+            }), 500
+
+    except Exception as e:
+        log.error(f"用户换车错误: {e}")
         return jsonify({"success": False, "error": f"系统错误: {str(e)}"}), 500
 
 
@@ -375,7 +613,19 @@ def admin_stats():
                     last_updated = last_updated + "Z"
 
             created_at = team.get("created_at")
-            # 兼容老数据：Team 没有 created_at 时，用该 Team 最早生成兑换码的时间兜底（近似“添加时间”）
+            created_at_source = None
+
+            # 优先从 teams_stats 表获取
+            if not created_at:
+                team_time_info = db.get_team_created_at(team_name)
+                if team_time_info:
+                    created_at = team_time_info.get("created_at")
+                    created_at_source = team_time_info.get("created_at_source")
+                    if not created_at:
+                        created_at = team_time_info.get("first_seen_at")
+                        created_at_source = "first_seen"
+
+            # 兼容老数据：Team 没有 created_at 时，用该 Team 最早生成兑换码的时间兜底（近似"添加时间"）
             if not created_at:
                 try:
                     with db.get_connection() as conn:
@@ -390,6 +640,8 @@ def admin_stats():
                         )
                         r = cursor.fetchone()
                         created_at = (r["first_time"] if r else None)
+                        if created_at:
+                            created_at_source = "first_code"
                 except Exception:
                     created_at = None
 
@@ -409,6 +661,7 @@ def admin_stats():
                     "pending_invites": row.get("pending_invites", 0),
                     "available_seats": row.get("available_seats", 0),
                     "created_at": created_at,
+                    "created_at_source": created_at_source,
                     "last_updated": last_updated,
                 }
             )
@@ -432,12 +685,20 @@ def admin_list_codes():
     try:
         team_name = request.args.get("team")
         status = request.args.get("status")
+        group_name = request.args.get("group")  # 新增：分组筛选
 
         include_deleted = request.args.get("include_deleted", "false").lower() in {"1", "true", "yes", "y", "on"}
 
+        # 使用新的支持分组筛选的方法
+        codes = db.list_codes_with_group(
+            team_name=None,
+            status=status,
+            group_name=group_name,
+            include_deleted=include_deleted
+        )
+
         # 兼容：数据库中可能存的是 Team3 这类旧名字，但前端筛选用的是当前展示名
-        # 所以这里按“归一化后的 team_index”过滤，而不是直接按 team_name 字符串过滤
-        codes = db.list_codes(team_name=None, status=status, include_deleted=include_deleted)
+        # 所以这里按"归一化后的 team_index"过滤，而不是直接按 team_name 字符串过滤
         target_idx = _team_index_from_any_name(team_name)
         if target_idx is not None:
             filtered = []
@@ -903,6 +1164,129 @@ def admin_bulk_delete_redemptions():
         return jsonify({"success": False, "error": str(e)}), 500
 
 
+# ==================== 兑换码分组管理 API ====================
+
+@app.route("/api/admin/groups", methods=["GET"])
+@require_admin
+def admin_list_groups():
+    """获取所有分组及其统计信息"""
+    try:
+        groups = db.list_code_groups()
+        return jsonify({"success": True, "data": groups})
+    except Exception as e:
+        log.error(f"获取分组列表失败: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/admin/groups", methods=["POST"])
+@require_admin
+def admin_create_group():
+    """创建新分组"""
+    try:
+        data = request.get_json() or {}
+        name = (data.get("name") or "").strip()
+        description = (data.get("description") or "").strip()
+        color = (data.get("color") or "#000000").strip()
+
+        if not name:
+            return jsonify({"success": False, "error": "分组名称不能为空"}), 400
+
+        # 检查分组名称是否已存在
+        existing = db.get_code_group_by_name(name)
+        if existing:
+            return jsonify({"success": False, "error": "分组名称已存在"}), 400
+
+        group_id = db.create_code_group(name, description, color)
+        return jsonify({
+            "success": True,
+            "message": "分组创建成功",
+            "data": {"id": group_id, "name": name}
+        })
+    except Exception as e:
+        log.error(f"创建分组失败: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/admin/groups/<int:group_id>", methods=["PUT"])
+@require_admin
+def admin_update_group(group_id):
+    """更新分组信息"""
+    try:
+        data = request.get_json() or {}
+        name = data.get("name")
+        description = data.get("description")
+        color = data.get("color")
+
+        if name is not None:
+            name = name.strip()
+            if not name:
+                return jsonify({"success": False, "error": "分组名称不能为空"}), 400
+
+            # 检查新名称是否与其他分组冲突
+            existing = db.get_code_group_by_name(name)
+            if existing and existing["id"] != group_id:
+                return jsonify({"success": False, "error": "分组名称已存在"}), 400
+
+        success = db.update_code_group(group_id, name, description, color)
+        if success:
+            return jsonify({"success": True, "message": "分组更新成功"})
+        else:
+            return jsonify({"success": False, "error": "分组不存在或未修改"}), 404
+    except Exception as e:
+        log.error(f"更新分组失败: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/admin/groups/<int:group_id>", methods=["DELETE"])
+@require_admin
+def admin_delete_group(group_id):
+    """删除分组"""
+    try:
+        data = request.get_json() or {}
+        clear_codes = data.get("clear_codes", False)
+
+        success = db.delete_code_group(group_id, clear_codes)
+        if success:
+            return jsonify({
+                "success": True,
+                "message": "分组删除成功" if not clear_codes else "分组删除成功，已清除兑换码的分组标记"
+            })
+        else:
+            return jsonify({"success": False, "error": "分组不存在"}), 404
+    except Exception as e:
+        log.error(f"删除分组失败: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/admin/codes/batch-group", methods=["POST"])
+@require_admin
+def admin_batch_update_code_group():
+    """批量更新兑换码的分组"""
+    try:
+        data = request.get_json() or {}
+        code_ids = data.get("code_ids", [])
+        group_name = data.get("group_name")
+
+        if not isinstance(code_ids, list) or not code_ids:
+            return jsonify({"success": False, "error": "code_ids 必须是非空数组"}), 400
+
+        # 如果指定了分组名称，检查分组是否存在
+        if group_name:
+            group = db.get_code_group_by_name(group_name)
+            if not group:
+                return jsonify({"success": False, "error": f"分组 '{group_name}' 不存在"}), 404
+
+        updated = db.batch_update_code_group(code_ids, group_name)
+        return jsonify({
+            "success": True,
+            "message": f"已更新 {updated} 个兑换码的分组",
+            "data": {"updated": updated}
+        })
+    except Exception as e:
+        log.error(f"批量更新兑换码分组失败: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
 # ==================== Team 管理 API ====================
 
 @app.route("/api/admin/teams", methods=["GET"])
@@ -1006,15 +1390,33 @@ def admin_delete_team(index):
                 {
                     **result,
                     "message": (result.get("message") or "删除成功")
-                    + (f"；已清理兑换码 {deleted_codes} 个，统计 {deleted_stats} 行" if cleanup else ""),
-                    "data": {"deleted_codes": deleted_codes, "deleted_team_stats": deleted_stats},
                 }
             )
-        else:
-            return jsonify(result), 404
-
     except Exception as e:
         log.error(f"删除 Team 失败: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/admin/teams/<int:index>/sync-created-time", methods=["POST"])
+@require_admin
+def sync_team_created_time_api(index):
+    """同步 Team 创建时间"""
+    try:
+        from team_manager import team_manager
+        from team_service import sync_team_created_time
+
+        teams = team_manager.get_team_list()
+        if index < 0 or index >= len(teams):
+            return jsonify({"success": False, "error": "Team 不存在"}), 404
+
+        team = teams[index]
+        team_name = team.get("name")
+
+        result = sync_team_created_time(team_name)
+        return jsonify(result)
+
+    except Exception as e:
+        log.error(f"同步 Team 创建时间失败: {e}")
         return jsonify({"success": False, "error": str(e)}), 500
 
 
@@ -1168,6 +1570,67 @@ def health():
     })
 
 
+# ==================== 监控和告警 API ====================
+
+@app.route("/api/admin/monitor/dashboard")
+@require_admin
+def monitor_dashboard():
+    """获取监控仪表板数据"""
+    try:
+        data = monitor.get_dashboard_data()
+        return jsonify({"success": True, "data": data})
+    except Exception as e:
+        log.error(f"获取监控数据失败: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/admin/monitor/alerts")
+@require_admin
+def monitor_alerts():
+    """获取告警列表"""
+    try:
+        limit = int(request.args.get("limit", 50))
+        level = request.args.get("level")
+        category = request.args.get("category")
+
+        alerts = monitor.alert_manager.get_recent_alerts(
+            limit=limit,
+            level=level,
+            category=category
+        )
+
+        return jsonify({"success": True, "alerts": alerts})
+    except Exception as e:
+        log.error(f"获取告警列表失败: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/admin/monitor/alerts/<int:alert_id>/resolve", methods=["POST"])
+@require_admin
+def resolve_alert(alert_id):
+    """标记告警为已解决"""
+    try:
+        resolved_by = request.json.get("resolved_by", "admin")
+        monitor.alert_manager.resolve_alert(alert_id, resolved_by)
+
+        return jsonify({"success": True, "message": "告警已标记为已解决"})
+    except Exception as e:
+        log.error(f"解决告警失败: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/admin/monitor/check", methods=["POST"])
+@require_admin
+def run_monitor_check():
+    """手动触发监控检查"""
+    try:
+        monitor.run_all_checks()
+        return jsonify({"success": True, "message": "监控检查已完成"})
+    except Exception as e:
+        log.error(f"运行监控检查失败: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
 # ==================== 启动服务 ====================
 
 def run_server(host="0.0.0.0", port=5000, debug=False):
@@ -1182,8 +1645,9 @@ def run_server(host="0.0.0.0", port=5000, debug=False):
 
 if __name__ == "__main__":
     # 从配置读取
-    host = config.get("web.host", "0.0.0.0")
-    port = config.get("web.port", 5000)
-    debug = config.get("web.debug", False)
+    host = os.getenv("HOST") or config.get("web.host", "0.0.0.0")
+    port = int(os.getenv("PORT") or config.get("web.port", 5000))
+    debug = os.getenv("DEBUG", "").lower() in {"1", "true", "yes"} or config.get("web.debug", False)
 
     run_server(host=host, port=port, debug=debug)
+

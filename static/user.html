@@ -1,0 +1,542 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>用户中心 - ChatGPT Team</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', Roboto, sans-serif;
+            background: #f5f5f7;
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        .header h1 {
+            color: #1d1d1f;
+            font-size: 28px;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+
+        .header p {
+            color: #86868b;
+            font-size: 15px;
+        }
+
+        .nav-links {
+            display: flex;
+            gap: 16px;
+            justify-content: center;
+            margin-bottom: 30px;
+        }
+
+        .nav-links a {
+            color: #000;
+            text-decoration: none;
+            padding: 8px 16px;
+            border-radius: 8px;
+            background: #fff;
+            border: 1px solid #d2d2d7;
+            font-size: 14px;
+            transition: all 0.2s;
+        }
+
+        .nav-links a:hover {
+            background: #000;
+            color: #fff;
+        }
+
+        .card {
+            background: #ffffff;
+            border: 1px solid #e5e5e5;
+            border-radius: 16px;
+            padding: 24px;
+            margin-bottom: 20px;
+        }
+
+        .card h2 {
+            font-size: 18px;
+            font-weight: 600;
+            color: #1d1d1f;
+            margin-bottom: 16px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid #e5e5e5;
+        }
+
+        .search-box {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 20px;
+        }
+
+        .search-box input {
+            flex: 1;
+            padding: 12px 16px;
+            border: 1px solid #d2d2d7;
+            border-radius: 10px;
+            font-size: 16px;
+            background: #fafafa;
+        }
+
+        .search-box input:focus {
+            outline: none;
+            border-color: #000;
+            background: #fff;
+        }
+
+        .btn {
+            padding: 12px 24px;
+            background: #000;
+            color: #fff;
+            border: none;
+            border-radius: 10px;
+            font-size: 15px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn:hover {
+            background: #1d1d1f;
+        }
+
+        .btn:disabled {
+            background: #d2d2d7;
+            color: #86868b;
+            cursor: not-allowed;
+        }
+
+        .btn-danger {
+            background: #ff3b30;
+        }
+
+        .btn-danger:hover {
+            background: #d63028;
+        }
+
+        .info-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 16px;
+        }
+
+        .info-item {
+            padding: 16px;
+            background: #f5f5f7;
+            border-radius: 12px;
+        }
+
+        .info-item label {
+            display: block;
+            font-size: 13px;
+            color: #86868b;
+            margin-bottom: 6px;
+        }
+
+        .info-item .value {
+            font-size: 16px;
+            font-weight: 500;
+            color: #1d1d1f;
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 4px 10px;
+            border-radius: 6px;
+            font-size: 13px;
+            font-weight: 500;
+        }
+
+        .status-active { background: #d1f0dc; color: #1d4428; }
+        .status-pending { background: #fff3cd; color: #856404; }
+        .status-expired { background: #f8d7da; color: #721c24; }
+        .status-unbound { background: #e2e3e5; color: #383d41; }
+
+        .table-wrapper {
+            overflow-x: auto;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        th, td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #e5e5e5;
+        }
+
+        th {
+            font-size: 13px;
+            color: #86868b;
+            font-weight: 500;
+        }
+
+        td {
+            font-size: 14px;
+            color: #1d1d1f;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 40px;
+            color: #86868b;
+        }
+
+        .message {
+            padding: 14px 16px;
+            border-radius: 12px;
+            margin-bottom: 20px;
+            display: none;
+        }
+
+        .message.success {
+            background: #f0f9f4;
+            color: #1d4428;
+            border: 1px solid #d1f0dc;
+        }
+
+        .message.error {
+            background: #fff0f0;
+            color: #6e1616;
+            border: 1px solid #ffd8d8;
+        }
+
+        .loading {
+            display: inline-block;
+            width: 14px;
+            height: 14px;
+            border: 2px solid #ffffff;
+            border-radius: 50%;
+            border-top-color: transparent;
+            animation: spin 0.8s linear infinite;
+            margin-right: 8px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .actions {
+            margin-top: 20px;
+            padding-top: 16px;
+            border-top: 1px solid #e5e5e5;
+            display: flex;
+            gap: 12px;
+        }
+
+        #userInfo, #redemptionHistory {
+            display: none;
+        }
+
+        .tabs {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 20px;
+        }
+
+        .tab {
+            padding: 10px 20px;
+            background: #f5f5f7;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            color: #1d1d1f;
+            transition: all 0.2s;
+        }
+
+        .tab.active {
+            background: #000;
+            color: #fff;
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>用户中心</h1>
+            <p>查看您的 Team 状态和兑换记录</p>
+        </div>
+
+        <div class="nav-links">
+            <a href="/">兑换席位</a>
+            <a href="/batch.html">批量兑换</a>
+            <a href="/user.html">用户中心</a>
+        </div>
+
+        <div id="message" class="message"></div>
+
+        <div class="card">
+            <h2>查询状态</h2>
+            <div class="search-box">
+                <input type="email" id="email" placeholder="请输入您的邮箱地址" autocomplete="email">
+                <button class="btn" id="searchBtn" onclick="searchUser()">查询</button>
+            </div>
+        </div>
+
+        <div id="userInfo" class="card">
+            <h2>当前 Team 状态</h2>
+            <div class="info-grid">
+                <div class="info-item">
+                    <label>邮箱</label>
+                    <div class="value" id="infoEmail">-</div>
+                </div>
+                <div class="info-item">
+                    <label>Team 名称</label>
+                    <div class="value" id="infoTeam">-</div>
+                </div>
+                <div class="info-item">
+                    <label>状态</label>
+                    <div class="value" id="infoStatus">-</div>
+                </div>
+                <div class="info-item">
+                    <label>加入时间</label>
+                    <div class="value" id="infoJoinedAt">-</div>
+                </div>
+                <div class="info-item">
+                    <label>到期时间</label>
+                    <div class="value" id="infoExpiresAt">-</div>
+                </div>
+                <div class="info-item">
+                    <label>创建时间</label>
+                    <div class="value" id="infoCreatedAt">-</div>
+                </div>
+            </div>
+            <div class="actions">
+                <button class="btn" onclick="transferTeam()">质保换车</button>
+                <button class="btn btn-danger" onclick="unbindTeam()">解绑 Team</button>
+            </div>
+        </div>
+
+        <div id="redemptionHistory" class="card">
+            <h2>兑换记录</h2>
+            <div class="table-wrapper">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>兑换码</th>
+                            <th>Team</th>
+                            <th>兑换时间</th>
+                        </tr>
+                    </thead>
+                    <tbody id="historyTable">
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const emailInput = document.getElementById('email');
+        const searchBtn = document.getElementById('searchBtn');
+        const userInfo = document.getElementById('userInfo');
+        const redemptionHistory = document.getElementById('redemptionHistory');
+        const message = document.getElementById('message');
+
+        // 从 URL 参数获取邮箱
+        const urlParams = new URLSearchParams(window.location.search);
+        const emailParam = urlParams.get('email');
+        if (emailParam) {
+            emailInput.value = emailParam;
+            searchUser();
+        }
+
+        // 回车搜索
+        emailInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') searchUser();
+        });
+
+        async function searchUser() {
+            const email = emailInput.value.trim();
+            if (!email) {
+                showMessage('请输入邮箱地址', 'error');
+                return;
+            }
+
+            searchBtn.disabled = true;
+            searchBtn.innerHTML = '<span class="loading"></span>查询中...';
+
+            try {
+                const response = await fetch('/api/user/status', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email })
+                });
+
+                const result = await response.json();
+
+                if (result.success && result.found) {
+                    displayUserInfo(result);
+                    userInfo.style.display = 'block';
+                    redemptionHistory.style.display = 'block';
+                } else {
+                    userInfo.style.display = 'none';
+                    redemptionHistory.style.display = 'none';
+                    showMessage(result.message || '未找到该邮箱的记录', 'error');
+                }
+            } catch (error) {
+                showMessage('查询失败: ' + error.message, 'error');
+            } finally {
+                searchBtn.disabled = false;
+                searchBtn.innerHTML = '查询';
+            }
+        }
+
+        function displayUserInfo(data) {
+            document.getElementById('infoEmail').textContent = data.email || '-';
+
+            if (data.lease) {
+                document.getElementById('infoTeam').textContent = data.lease.team_name || '-';
+
+                const status = data.lease.status || 'unknown';
+                const statusMap = {
+                    'active': { text: '活跃', class: 'status-active' },
+                    'pending': { text: '待加入', class: 'status-pending' },
+                    'awaiting_join': { text: '等待加入', class: 'status-pending' },
+                    'expired': { text: '已过期', class: 'status-expired' },
+                    'unbound': { text: '已解绑', class: 'status-unbound' },
+                    'failed': { text: '失败', class: 'status-expired' }
+                };
+                const statusInfo = statusMap[status] || { text: status, class: '' };
+                document.getElementById('infoStatus').innerHTML =
+                    `<span class="status-badge ${statusInfo.class}">${statusInfo.text}</span>`;
+
+                document.getElementById('infoJoinedAt').textContent =
+                    data.lease.joined_at ? new Date(data.lease.joined_at).toLocaleString() : '未同步';
+                document.getElementById('infoExpiresAt').textContent =
+                    data.lease.expires_at ? new Date(data.lease.expires_at).toLocaleString() : '-';
+                document.getElementById('infoCreatedAt').textContent =
+                    data.lease.created_at ? new Date(data.lease.created_at).toLocaleString() : '-';
+            } else {
+                document.getElementById('infoTeam').textContent = '-';
+                document.getElementById('infoStatus').innerHTML = '<span class="status-badge">无记录</span>';
+                document.getElementById('infoJoinedAt').textContent = '-';
+                document.getElementById('infoExpiresAt').textContent = '-';
+                document.getElementById('infoCreatedAt').textContent = '-';
+            }
+
+            // 显示兑换历史
+            const tbody = document.getElementById('historyTable');
+            tbody.innerHTML = '';
+
+            if (data.redemptions && data.redemptions.length > 0) {
+                data.redemptions.forEach(r => {
+                    const row = document.createElement('tr');
+                    row.innerHTML = `
+                        <td><code>${r.code || '-'}</code></td>
+                        <td>${r.team_name || '-'}</td>
+                        <td>${r.redeemed_at ? new Date(r.redeemed_at).toLocaleString() : '-'}</td>
+                    `;
+                    tbody.appendChild(row);
+                });
+            } else {
+                tbody.innerHTML = '<tr><td colspan="3" class="empty-state">暂无兑换记录</td></tr>';
+            }
+        }
+
+        async function unbindTeam() {
+            const email = emailInput.value.trim();
+            if (!email) {
+                showMessage('请先输入邮箱', 'error');
+                return;
+            }
+
+            if (!confirm(`确定要解绑当前 Team 吗?\n\n邮箱: ${email}\n\n解绑后您将从 Team 中移除，需要重新兑换才能加入。`)) {
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/user/unbind', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email })
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    showMessage(result.message || '解绑成功', 'success');
+                    searchUser(); // 刷新状态
+                } else {
+                    showMessage(result.error || '解绑失败', 'error');
+                }
+            } catch (error) {
+                showMessage('解绑失败: ' + error.message, 'error');
+            }
+        }
+
+        async function transferTeam() {
+            const email = emailInput.value.trim();
+            if (!email) {
+                showMessage('请先输入邮箱', 'error');
+                return;
+            }
+
+            const reason = prompt('请输入换车原因（可选）：\n\n例如：账号无法使用、Team 出现问题等');
+            if (reason === null) {
+                return; // 用户点击了取消
+            }
+
+            if (!confirm(`确定要申请换车吗?\n\n邮箱: ${email}\n原因: ${reason || '无'}\n\n系统将为您转移到新的 Team。`)) {
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/user/transfer', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email, reason })
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    showMessage(result.message || '换车成功', 'success');
+                    searchUser(); // 刷新状态
+                } else {
+                    showMessage(result.error || '换车失败', 'error');
+                }
+            } catch (error) {
+                showMessage('换车失败: ' + error.message, 'error');
+            }
+        }
+
+        function showMessage(text, type) {
+            message.textContent = text;
+            message.className = `message ${type}`;
+            message.style.display = 'block';
+
+            setTimeout(() => {
+                message.style.display = 'none';
+            }, 5000);
+        }
+    </script>
+</body>
+</html>

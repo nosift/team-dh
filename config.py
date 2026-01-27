@@ -55,6 +55,23 @@ def _env_bool(value: str | None) -> bool | None:
     return None
 
 
+def env_bool(name: str, default: bool = False) -> bool:
+    """从环境变量获取布尔值
+
+    Args:
+        name: 环境变量名称
+        default: 默认值
+
+    Returns:
+        bool: 布尔值
+    """
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    result = _env_bool(raw)
+    return result if result is not None else default
+
+
 def _decode_env_b64(var_name: str) -> str | None:
     raw = os.getenv(var_name)
     if not raw:

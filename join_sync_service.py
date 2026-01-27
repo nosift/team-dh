@@ -9,25 +9,12 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 import config
+from config import env_bool
 from database import db
 from date_utils import add_months_same_day, parse_datetime_loose
 from lease_models import LeaseAction, SyncReason
 from logger import log
 from team_service import get_invite_status_for_email, get_member_info_for_email
-
-
-def _env_bool(name: str, default: bool = False) -> bool:
-    '''解析环境变量为布尔值'''
-    import os
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    v = raw.strip().lower()
-    if v in {'1', 'true', 'yes', 'y', 'on'}:
-        return True
-    if v in {'0', 'false', 'no', 'n', 'off'}:
-        return False
-    return default
 
 
 def _defer_join_sync_seconds(reason: SyncReason) -> int:
@@ -200,7 +187,7 @@ class JoinSyncService:
                     pass
 
             # 成员列表没有时间字段,是否允许近似
-            allow_approx = _env_bool('AUTO_TRANSFER_ALLOW_APPROX_JOIN_AT', False)
+            allow_approx = env_bool('AUTO_TRANSFER_ALLOW_APPROX_JOIN_AT', False)
             if allow_approx:
                 joined_at = datetime.now()
                 if record_events:

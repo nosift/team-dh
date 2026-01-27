@@ -115,7 +115,7 @@ class RedemptionService:
                 # 11. 记录"成员租约"（用于按月到期自动转移到新 Team）
                 # 只为启用了 auto_transfer 的兑换码创建租约
                 try:
-                    code_info = db.get_code_by_value(code)
+                    code_info = db.get_code(code)
                     auto_transfer_enabled = code_info.get("auto_transfer_enabled", 1) if code_info else 1
 
                     if auto_transfer_enabled:
@@ -148,6 +148,32 @@ class RedemptionService:
                         log.info(f"兑换码 {code} 的 auto_transfer_enabled=0，跳过创建租约", icon="info")
                 except Exception as e:
                     log.warning(f"写入成员租约失败（不影响兑换流程）: {e}")
+
+                # 12. 触发后台同步 joined_at（延迟执行，给用户时间接受邀请）
+                try:
+                    from threading import Thread
+                    import time as time_module
+
+                    def delayed_sync_join(target_email: str, delay_seconds: int = 60):
+                        """延迟同步 joined_at"""
+                        try:
+                            time_module.sleep(delay_seconds)
+                            from join_sync_service import JoinSyncService
+                            for attempt in range(5):  # 最多尝试5次
+                                result = JoinSyncService.sync_single_email(target_email, record_events=True)
+                                if result.get("synced", 0) > 0:
+                                    log.info(f"自动同步 joined_at 成功: {target_email}")
+                                    break
+                                # 等待3分钟后重试
+                                time_module.sleep(180)
+                        except Exception as sync_err:
+                            log.warning(f"自动同步 joined_at 失败: {sync_err}")
+
+                    # 启动后台线程，60秒后开始同步
+                    sync_thread = Thread(target=delayed_sync_join, args=(email, 60), daemon=True)
+                    sync_thread.start()
+                except Exception as sync_setup_err:
+                    log.warning(f"启动同步任务失败: {sync_setup_err}")
 
                 log.info(f"{email} 兑换成功", icon="success")
 

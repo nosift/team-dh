@@ -438,10 +438,12 @@
     <div class="tabs">
         <div class="tab-buttons">
             <button class="tab-btn active" onclick="switchTab(event, 'codes')">兑换码管理</button>
+            <button class="tab-btn" onclick="switchTab(event, 'groups')">分组管理</button>
             <button class="tab-btn" onclick="switchTab(event, 'redemptions')">兑换记录</button>
             <button class="tab-btn" onclick="switchTab(event, 'teams')">Team统计</button>
             <button class="tab-btn" onclick="switchTab(event, 'teamManagement')">Team管理</button>
             <button class="tab-btn" onclick="switchTab(event, 'leases')">到期/转移</button>
+            <button class="tab-btn" onclick="switchTab(event, 'monitor')">监控告警</button>
         </div>
 
         <div class="tab-content">
@@ -460,6 +462,11 @@
                             <option value="disabled">禁用</option>
                             <option value="expired">过期</option>
                         </select>
+                        <span class="filter-label">分组</span>
+                        <select id="groupFilter" onchange="loadCodes()">
+                            <option value="">所有分组</option>
+                            <option value="__ungrouped__">未分组</option>
+                        </select>
                     </div>
                     <div class="filter-right">
                         <button class="refresh-btn" onclick="loadCodes({ force: true })">刷新</button>
@@ -468,6 +475,21 @@
                 </div>
 
                 <div id="codesTable">
+                    <div class="loading">加载中...</div>
+                </div>
+            </div>
+
+            <!-- 分组管理 -->
+            <div id="groups" class="tab-pane">
+                <div class="filter-bar">
+                    <div class="filter-left"></div>
+                    <div class="filter-right">
+                        <button class="action-btn" onclick="showCreateGroupModal()">创建分组</button>
+                        <button class="refresh-btn" onclick="loadGroups({ force: true })">刷新</button>
+                    </div>
+                </div>
+
+                <div id="groupsTable">
                     <div class="loading">加载中...</div>
                 </div>
             </div>
@@ -535,9 +557,65 @@
 
                 <div style="margin-top: 16px;">
                     <div style="color:#86868b; font-size: 13px; line-height: 1.6;">
-                        提示：到期计算以 <code>join_at</code>（加入时间）为准；若状态为“待同步加入时间”，表示还未拿到准确加入时间。
+                        提示：到期计算以 <code>join_at</code>（加入时间）为准；若状态为"待同步加入时间"，表示还未拿到准确加入时间。
                     </div>
                     <div id="leaseEventsTable" style="margin-top: 10px;"></div>
+                </div>
+            </div>
+
+            <!-- 监控告警 Tab -->
+            <div id="monitor" class="tab-pane" style="display: none;">
+                <div class="filter-bar">
+                    <div class="filter-left">
+                        <span class="filter-label">告警级别</span>
+                        <select id="alertLevelFilter" class="ui-input" style="width: 120px;" onchange="loadAlerts()">
+                            <option value="">全部</option>
+                            <option value="info">信息</option>
+                            <option value="warning">警告</option>
+                            <option value="error">错误</option>
+                            <option value="critical">严重</option>
+                        </select>
+                        <span class="filter-label" style="margin-left: 16px;">分类</span>
+                        <select id="alertCategoryFilter" class="ui-input" style="width: 150px;" onchange="loadAlerts()">
+                            <option value="">全部</option>
+                            <option value="team_capacity">席位容量</option>
+                            <option value="transfer_failure">转移失败</option>
+                            <option value="database">数据库</option>
+                            <option value="system">系统</option>
+                        </select>
+                    </div>
+                    <div class="filter-right">
+                        <button class="refresh-btn" onclick="runMonitorCheck()" title="手动检查">立即检查</button>
+                        <button class="refresh-btn" onclick="loadAlerts()" title="刷新列表">刷新</button>
+                    </div>
+                </div>
+
+                <!-- 告警统计 -->
+                <div class="stats-grid" style="margin-bottom: 20px;">
+                    <div class="stat-card">
+                        <h3>严重告警</h3>
+                        <div class="number" id="criticalCount" style="color: #ff3b30;">0</div>
+                        <div class="subtext">24小时内</div>
+                    </div>
+                    <div class="stat-card">
+                        <h3>错误告警</h3>
+                        <div class="number" id="errorCount" style="color: #ff9500;">0</div>
+                        <div class="subtext">24小时内</div>
+                    </div>
+                    <div class="stat-card">
+                        <h3>警告告警</h3>
+                        <div class="number" id="warningCount" style="color: #ffcc00;">0</div>
+                        <div class="subtext">24小时内</div>
+                    </div>
+                    <div class="stat-card">
+                        <h3>信息告警</h3>
+                        <div class="number" id="infoCount" style="color: #007aff;">0</div>
+                        <div class="subtext">24小时内</div>
+                    </div>
+                </div>
+
+                <div id="alertsTable">
+                    <div class="loading">加载中...</div>
                 </div>
             </div>
         </div>
@@ -663,13 +741,19 @@
             // 加载对应数据
             if (tabName === 'codes') {
                 loadTeamFilterOptions({ force: true });
+                loadGroupFilterOptions({ force: true });
                 loadCodes({ force: true });
                 loadStats({ force: true });
             }
+            else if (tabName === 'groups') loadGroups({ force: true });
             else if (tabName === 'redemptions') loadRedemptions();
             else if (tabName === 'teams') loadTeamStats();
             else if (tabName === 'teamManagement') loadTeamList();
             else if (tabName === 'leases') loadLeases();
+            else if (tabName === 'monitor') {
+                loadMonitorDashboard();
+                loadAlerts();
+            }
         }
 
         // ==================== 简单缓存（减少切换 Tab 时的重复请求卡顿） ====================
@@ -677,6 +761,7 @@
             stats: 15000,
             teams: 15000,
             codes: 8000,
+            groups: 8000,
             redemptions: 8000,
             leases: 8000,
             leaseEvents: 8000,
@@ -685,6 +770,7 @@
         const cacheState = {
             stats: { ts: 0, data: null, promise: null },
             teams: { ts: 0, data: null, promise: null },
+            groups: { ts: 0, data: null, promise: null },
             redemptions: { ts: 0, data: null, promise: null },
             leases: { ts: 0, data: null, promise: null },
             leaseEvents: new Map(), // email -> { ts, data, promise }
@@ -948,8 +1034,8 @@
             return entry.promise;
         }
 
-        async function getCodes({ team = '', status = '', includeDeleted = false, force = false } = {}) {
-            const key = `${team}|${status}|${includeDeleted ? '1' : '0'}`;
+        async function getCodes({ team = '', status = '', group = '', includeDeleted = false, force = false } = {}) {
+            const key = `${team}|${status}|${group}|${includeDeleted ? '1' : '0'}`;
             const entry = cacheState.codes.get(key) || { ts: 0, data: null, promise: null };
 
             if (!force && isFresh(entry, CACHE_TTL_MS.codes)) return entry.data;
@@ -958,6 +1044,13 @@
             let url = '/api/admin/codes?';
             if (team) url += `team=${encodeURIComponent(team)}&`;
             if (status) url += `status=${encodeURIComponent(status)}&`;
+            if (group) {
+                if (group === '__ungrouped__') {
+                    url += 'group=&';
+                } else {
+                    url += `group=${encodeURIComponent(group)}&`;
+                }
+            }
             if (includeDeleted) url += 'include_deleted=true&';
 
             entry.promise = fetchJson(url).then((result) => {
@@ -1026,6 +1119,224 @@
             return entry.promise;
         }
 
+        // ==================== 分组管理 API ====================
+
+        async function getGroups({ force = false } = {}) {
+            const entry = cacheState.groups;
+            if (!force && isFresh(entry, CACHE_TTL_MS.groups)) return entry.data;
+            if (!force && entry.promise) return entry.promise;
+
+            entry.promise = fetchJson('/api/admin/groups').then((result) => {
+                entry.data = result.data;
+                entry.ts = Date.now();
+                return entry.data;
+            }).finally(() => {
+                entry.promise = null;
+            });
+
+            return entry.promise;
+        }
+
+        async function loadGroups(options = {}) {
+            const groupsTable = document.getElementById('groupsTable');
+            groupsTable.innerHTML = '<div class="loading">加载中...</div>';
+
+            try {
+                const groups = await getGroups({ force: !!options.force });
+                let html = '<table><thead><tr><th>分组名称</th><th>描述</th><th>颜色</th><th>兑换码数量</th><th>激活/已用完</th><th>创建时间</th><th>操作</th></tr></thead><tbody>';
+
+                if (groups.length === 0) {
+                    html += '<tr><td colspan="7" style="text-align: center; color: #86868b;">暂无分组</td></tr>';
+                } else {
+                    groups.forEach(group => {
+                        const safeId = group.id;
+                        const safeName = escapeHtml(group.name);
+                        const safeDesc = escapeHtml(group.description || '-');
+                        const safeColor = escapeHtml(group.color || '#000000');
+                        const codeCount = group.code_count || 0;
+                        const activeCount = group.active_count || 0;
+                        const usedUpCount = group.used_up_count || 0;
+                        const createdAt = new Date(group.created_at).toLocaleString();
+
+                        html += `
+                            <tr>
+                                <td><strong>${safeName}</strong></td>
+                                <td>${safeDesc}</td>
+                                <td><span style="display: inline-block; width: 20px; height: 20px; background: ${safeColor}; border-radius: 4px; border: 1px solid #e5e5e5;"></span> ${safeColor}</td>
+                                <td>${codeCount}</td>
+                                <td>${activeCount} / ${usedUpCount}</td>
+                                <td>${createdAt}</td>
+                                <td>
+                                    <button class="action-btn" onclick="showEditGroupModal(${safeId}, '${safeName}', '${safeDesc}', '${safeColor}')">编辑</button>
+                                    <button class="action-btn danger" onclick="deleteGroup(${safeId}, '${safeName}')">删除</button>
+                                </td>
+                            </tr>
+                        `;
+                    });
+                }
+
+                html += '</tbody></table>';
+                groupsTable.innerHTML = html;
+
+                // 更新分组筛选下拉框
+                await loadGroupFilterOptions({ force: true });
+            } catch (error) {
+                console.error('加载分组失败:', error);
+                groupsTable.innerHTML = '<div class="loading">加载失败</div>';
+            }
+        }
+
+        async function loadGroupFilterOptions(options = {}) {
+            try {
+                const groups = await getGroups({ force: !!options.force });
+                const groupFilter = document.getElementById('groupFilter');
+                if (!groupFilter) return;
+
+                // 保存当前选中的值
+                const currentValue = groupFilter.value;
+
+                // 清空并重新填充选项
+                groupFilter.innerHTML = '<option value="">所有分组</option><option value="__ungrouped__">未分组</option>';
+
+                groups.forEach(group => {
+                    const option = document.createElement('option');
+                    option.value = group.name;
+                    option.textContent = group.name;
+                    groupFilter.appendChild(option);
+                });
+
+                // 恢复之前的选中值
+                if (currentValue) {
+                    groupFilter.value = currentValue;
+                }
+            } catch (error) {
+                console.error('加载分组筛选选项失败:', error);
+            }
+        }
+
+        function showCreateGroupModal() {
+            showUIModal({
+                title: '创建分组',
+                inputs: [
+                    { id: 'groupName', label: '分组名称', type: 'text', required: true, placeholder: '例如：VIP用户' },
+                    { id: 'groupDesc', label: '描述', type: 'text', placeholder: '可选' },
+                    { id: 'groupColor', label: '颜色', type: 'color', value: '#000000' }
+                ],
+                actions: [
+                    { label: '取消', style: 'secondary', onClick: () => hideUIModal() },
+                    {
+                        label: '创建', style: 'primary', onClick: async () => {
+                            const name = document.getElementById('groupName').value.trim();
+                            const description = document.getElementById('groupDesc').value.trim();
+                            const color = document.getElementById('groupColor').value;
+
+                            if (!name) {
+                                showToast('请输入分组名称', 'error');
+                                return;
+                            }
+
+                            try {
+                                const response = await fetch('/api/admin/groups', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ name, description, color })
+                                });
+
+                                const result = await response.json();
+                                if (result.success) {
+                                    showToast(result.message || '分组创建成功', 'success');
+                                    hideUIModal();
+                                    loadGroups({ force: true });
+                                } else {
+                                    showToast(result.error || '创建失败', 'error');
+                                }
+                            } catch (error) {
+                                console.error('创建分组失败:', error);
+                                showToast('创建失败', 'error');
+                            }
+                        }
+                    }
+                ]
+            });
+        }
+
+        function showEditGroupModal(groupId, name, description, color) {
+            showUIModal({
+                title: '编辑分组',
+                inputs: [
+                    { id: 'groupName', label: '分组名称', type: 'text', required: true, value: name },
+                    { id: 'groupDesc', label: '描述', type: 'text', value: description === '-' ? '' : description },
+                    { id: 'groupColor', label: '颜色', type: 'color', value: color }
+                ],
+                actions: [
+                    { label: '取消', style: 'secondary', onClick: () => hideUIModal() },
+                    {
+                        label: '保存', style: 'primary', onClick: async () => {
+                            const newName = document.getElementById('groupName').value.trim();
+                            const newDescription = document.getElementById('groupDesc').value.trim();
+                            const newColor = document.getElementById('groupColor').value;
+
+                            if (!newName) {
+                                showToast('请输入分组名称', 'error');
+                                return;
+                            }
+
+                            try {
+                                const response = await fetch(`/api/admin/groups/${groupId}`, {
+                                    method: 'PUT',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ name: newName, description: newDescription, color: newColor })
+                                });
+
+                                const result = await response.json();
+                                if (result.success) {
+                                    showToast(result.message || '分组更新成功', 'success');
+                                    hideUIModal();
+                                    loadGroups({ force: true });
+                                } else {
+                                    showToast(result.error || '更新失败', 'error');
+                                }
+                            } catch (error) {
+                                console.error('更新分组失败:', error);
+                                showToast('更新失败', 'error');
+                            }
+                        }
+                    }
+                ]
+            });
+        }
+
+        async function deleteGroup(groupId, groupName) {
+            const confirmed = await showUIConfirm({
+                title: '确认删除分组',
+                message: `确定要删除分组 "${groupName}" 吗？`,
+                hint: '删除分组不会删除其中的兑换码，但会清除兑换码的分组标记。',
+                confirmText: '删除',
+                cancelText: '取消'
+            });
+
+            if (!confirmed) return;
+
+            try {
+                const response = await fetch(`/api/admin/groups/${groupId}`, {
+                    method: 'DELETE',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ clear_codes: true })
+                });
+
+                const result = await response.json();
+                if (result.success) {
+                    showToast(result.message || '分组删除成功', 'success');
+                    loadGroups({ force: true });
+                } else {
+                    showToast(result.error || '删除失败', 'error');
+                }
+            } catch (error) {
+                console.error('删除分组失败:', error);
+                showToast('删除失败', 'error');
+            }
+        }
+
         // 加载统计数据
         async function loadStats(options = {}) {
             try {
@@ -1066,10 +1377,11 @@
             codesTable.innerHTML = '<div class="loading">加载中...</div>';
             const team = document.getElementById('teamFilter').value;
             const status = document.getElementById('statusFilter').value;
+            const group = document.getElementById('groupFilter').value;
 
             try {
-                const codes = await getCodes({ team, status, force: !!options.force });
-                let html = '<table><thead><tr><th>兑换码</th><th>Team</th><th>使用情况</th><th>状态</th><th>过期时间</th><th>操作</th></tr></thead><tbody>';
+                const codes = await getCodes({ team, status, group, force: !!options.force });
+                let html = '<table><thead><tr><th>兑换码</th><th>Team</th><th>分组</th><th>使用情况</th><th>状态</th><th>过期时间</th><th>操作</th></tr></thead><tbody>';
 
                 codes.forEach(code => {
                     const statusBadge =
@@ -1082,13 +1394,14 @@
                     const teamName = code.team_display_name || code.team_name || code.team_key || '-';
                     const safeTeamName = escapeHtml(teamName);
                     const safeCode = escapeHtml(code.code);
-                    const codeJson = JSON.stringify(code.code);
+                    const groupName = code.group_name || '-';
+                    const safeGroupName = escapeHtml(groupName);
 
                     const toggleBtn = code.status === 'active'
-                        ? `<button class="action-btn disable" onclick="updateCodeStatus(${codeJson}, 'disabled')">禁用</button>`
+                        ? `<button class="action-btn disable" data-code-action="disable" data-code="${safeCode}">禁用</button>`
                         : ((code.status === 'deleted' || code.status === 'used_up')
                             ? ''
-                            : `<button class="action-btn enable" onclick="updateCodeStatus(${codeJson}, 'active')">启用</button>`);
+                            : `<button class="action-btn enable" data-code-action="enable" data-code="${safeCode}">启用</button>`);
 
                     const statusText = escapeHtml(labelOf(LABELS.codeStatus, code.status, code.status));
 
@@ -1096,12 +1409,13 @@
                         <tr>
                             <td><code class="copyable" data-copy="${safeCode}" title="点击复制">${safeCode}</code></td>
                             <td><span class="team-cell" title="${safeTeamName}">${safeTeamName}</span></td>
+                            <td>${safeGroupName}</td>
                             <td>${code.used_count}/${code.max_uses}</td>
                             <td><span class="badge ${statusBadge}">${statusText}</span></td>
                             <td>${expires}</td>
                             <td>
                                 ${toggleBtn}
-                                <button class="action-btn danger" onclick="deleteCode(${codeJson})">删除</button>
+                                <button class="action-btn danger" data-code-action="delete" data-code="${safeCode}">删除</button>
                             </td>
                         </tr>
                     `;
@@ -1161,12 +1475,40 @@
             try {
                 const data = await getStats(options);
                 const teams = data.teams;
-                let html = '<table><thead><tr><th>Team</th><th>总席位</th><th>已使用</th><th>待接受</th><th>可用席位</th><th>添加时间</th></tr></thead><tbody>';
+                let html = '<table><thead><tr><th>Team</th><th>总席位</th><th>已使用</th><th>待接受</th><th>可用席位</th><th>创建时间</th><th>使用时长</th><th>操作</th></tr></thead><tbody>';
 
                 teams.forEach(team => {
-                    const time = team.created_at ? new Date(team.created_at).toLocaleString() : '未知';
                     const teamName = team.team_display_name || team.team_name || team.team_key || '-';
                     const safeTeamName = escapeHtml(teamName);
+                    const teamIndex = team.team_index;
+
+                    // 处理创建时间
+                    let timeDisplay = '未知';
+                    let timeSource = '';
+                    let usageDays = '-';
+
+                    if (team.created_at) {
+                        const createdDate = new Date(team.created_at);
+                        timeDisplay = formatDateTime(team.created_at);
+
+                        // 计算使用时长
+                        const now = new Date();
+                        const diffMs = now - createdDate;
+                        const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+                        usageDays = diffDays + ' 天';
+
+                        // 数据来源标识
+                        const source = team.created_at_source || 'unknown';
+                        if (source.startsWith('estimated_')) {
+                            timeSource = '<span style="color: #ffcc00;" title="推断时间">~</span>';
+                        } else if (source === 'api') {
+                            timeSource = '<span style="color: #34c759;" title="已验证">✓</span>';
+                        } else if (source === 'first_seen' || source === 'first_code') {
+                            timeSource = '<span style="color: #ffcc00;" title="首次记录">~</span>';
+                        } else {
+                            timeSource = '<span style="color: #86868b;" title="未知">?</span>';
+                        }
+                    }
 
                     html += `
                         <tr>
@@ -1175,7 +1517,15 @@
                             <td>${team.used_seats}</td>
                             <td>${team.pending_invites}</td>
                             <td><strong>${team.available_seats}</strong></td>
-                            <td>${time}</td>
+                            <td>${timeSource} ${timeDisplay}</td>
+                            <td>${usageDays}</td>
+                            <td>
+                                <button class="action-btn" onclick="syncTeamCreatedTime(${teamIndex})" title="同步创建时间">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/>
+                                    </svg>
+                                </button>
+                            </td>
                         </tr>
                     `;
                 });
@@ -1202,6 +1552,41 @@
             } catch (error) {
                 showToast('刷新失败: ' + error.message, 'danger', 2200);
                 loadTeamStats({ force: true });
+            }
+        }
+
+        // 同步 Team 创建时间
+        async function syncTeamCreatedTime(teamIndex) {
+            const btn = event.target.closest('button');
+            if (!btn) return;
+
+            btn.disabled = true;
+            btn.innerHTML = '<span class="loading" style="width: 12px; height: 12px; border-width: 2px;"></span>';
+
+            try {
+                const response = await fetch(`/api/admin/teams/${teamIndex}/sync-created-time`, {
+                    method: 'POST'
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    showToast(result.message || '已同步创建时间', 'success');
+                    cacheState.stats.ts = 0;
+                    loadTeamStats({ force: true });
+                } else {
+                    showToast(result.message || '同步失败', 'danger');
+                }
+            } catch (error) {
+                console.error('同步 Team 创建时间失败:', error);
+                showToast('同步失败', 'danger');
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = `
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/>
+                    </svg>
+                `;
             }
         }
 
@@ -1398,6 +1783,19 @@
             if (action === 'lease-view') loadLeaseEvents(email);
             else if (action === 'lease-transfer') runTransferForEmail(email);
             else if (action === 'lease-delete') deleteLease(email);
+        }, true);
+
+        // 兑换码按钮事件代理（避免 inline onclick 的引号问题）
+        document.addEventListener('click', (e) => {
+            const btn = e.target && e.target.closest ? e.target.closest('button[data-code-action]') : null;
+            if (!btn) return;
+            const action = btn.getAttribute('data-code-action');
+            const code = (btn.getAttribute('data-code') || '').trim();
+            if (!action || !code) return;
+
+            if (action === 'delete') deleteCode(code);
+            else if (action === 'disable') updateCodeStatus(code, 'disabled');
+            else if (action === 'enable') updateCodeStatus(code, 'active');
         }, true);
 
         async function syncJoinTimes() {
@@ -1889,6 +2287,169 @@
         function closeGenerateCodesModal() {
             document.getElementById('generateCodesModal').style.display = 'none';
             currentEditingTeamIndex = null;
+        }
+
+        // ==================== 监控告警功能 ====================
+
+        // 加载监控仪表板
+        async function loadMonitorDashboard() {
+            try {
+                const response = await fetch('/api/admin/monitor/dashboard');
+                const result = await response.json();
+
+                if (result.success) {
+                    const stats = result.data.alert_stats;
+                    document.getElementById('criticalCount').textContent = stats.critical || 0;
+                    document.getElementById('errorCount').textContent = stats.error || 0;
+                    document.getElementById('warningCount').textContent = stats.warning || 0;
+                    document.getElementById('infoCount').textContent = stats.info || 0;
+                }
+            } catch (error) {
+                console.error('加载监控仪表板失败:', error);
+            }
+        }
+
+        // 加载告警列表
+        async function loadAlerts() {
+            const level = document.getElementById('alertLevelFilter').value;
+            const category = document.getElementById('alertCategoryFilter').value;
+
+            try {
+                let url = '/api/admin/monitor/alerts?limit=50';
+                if (level) url += `&level=${level}`;
+                if (category) url += `&category=${category}`;
+
+                const response = await fetch(url);
+                const result = await response.json();
+
+                if (result.success) {
+                    renderAlertsTable(result.alerts);
+                    loadMonitorDashboard(); // 同时更新统计
+                }
+            } catch (error) {
+                console.error('加载告警列表失败:', error);
+                document.getElementById('alertsTable').innerHTML = '<div class="error">加载失败</div>';
+            }
+        }
+
+        // 渲染告警表格
+        function renderAlertsTable(alerts) {
+            const container = document.getElementById('alertsTable');
+
+            if (!alerts || alerts.length === 0) {
+                container.innerHTML = '<div class="empty-state">暂无告警</div>';
+                return;
+            }
+
+            const levelColors = {
+                'critical': '#ff3b30',
+                'error': '#ff9500',
+                'warning': '#ffcc00',
+                'info': '#007aff'
+            };
+
+            const levelLabels = {
+                'critical': '严重',
+                'error': '错误',
+                'warning': '警告',
+                'info': '信息'
+            };
+
+            const categoryLabels = {
+                'team_capacity': '席位容量',
+                'transfer_failure': '转移失败',
+                'database': '数据库',
+                'system': '系统'
+            };
+
+            let html = '<table class="data-table"><thead><tr>';
+            html += '<th style="width: 80px;">级别</th>';
+            html += '<th style="width: 100px;">分类</th>';
+            html += '<th>标题</th>';
+            html += '<th>消息</th>';
+            html += '<th style="width: 160px;">时间</th>';
+            html += '<th style="width: 100px;">状态</th>';
+            html += '<th style="width: 80px;">操作</th>';
+            html += '</tr></thead><tbody>';
+
+            alerts.forEach(alert => {
+                const levelColor = levelColors[alert.level] || '#86868b';
+                const levelLabel = levelLabels[alert.level] || alert.level;
+                const categoryLabel = categoryLabels[alert.category] || alert.category;
+                const isResolved = alert.resolved_at != null;
+
+                html += '<tr>';
+                html += `<td><span style="color: ${levelColor}; font-weight: 600;">${levelLabel}</span></td>`;
+                html += `<td>${categoryLabel}</td>`;
+                html += `<td style="font-weight: 500;">${alert.title}</td>`;
+                html += `<td style="color: #86868b; font-size: 13px;">${alert.message}</td>`;
+                html += `<td style="font-size: 13px;">${formatDateTime(alert.created_at)}</td>`;
+                html += `<td>${isResolved ? '<span style="color: #34c759;">已解决</span>' : '<span style="color: #ff9500;">未解决</span>'}</td>`;
+                html += `<td>`;
+                if (!isResolved) {
+                    html += `<button class="action-btn" onclick="resolveAlert(${alert.id})" title="标记为已解决">✓</button>`;
+                }
+                html += `</td>`;
+                html += '</tr>';
+            });
+
+            html += '</tbody></table>';
+            container.innerHTML = html;
+        }
+
+        // 标记告警为已解决
+        async function resolveAlert(alertId) {
+            if (!confirm('确定要标记此告警为已解决吗？')) {
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/admin/monitor/alerts/${alertId}/resolve`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ resolved_by: 'admin' })
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    showMessage('告警已标记为已解决', 'success');
+                    loadAlerts();
+                } else {
+                    showMessage(result.error || '操作失败', 'error');
+                }
+            } catch (error) {
+                console.error('标记告警失败:', error);
+                showMessage('操作失败', 'error');
+            }
+        }
+
+        // 手动触发监控检查
+        async function runMonitorCheck() {
+            const btn = event.target;
+            btn.disabled = true;
+            btn.textContent = '检查中...';
+
+            try {
+                const response = await fetch('/api/admin/monitor/check', {
+                    method: 'POST'
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    showMessage('监控检查已完成', 'success');
+                    setTimeout(() => loadAlerts(), 1000);
+                } else {
+                    showMessage(result.error || '检查失败', 'error');
+                }
+            } catch (error) {
+                console.error('运行监控检查失败:', error);
+                showMessage('检查失败', 'error');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '立即检查';
+            }
         }
     </script>
 </body>
