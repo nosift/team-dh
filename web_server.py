@@ -655,6 +655,8 @@ def admin_stats():
             team_stats.append(
                 {
                     "team_name": team_name,
+                    "team_display_name": team_name,  # 添加显示名称
+                    "team_key": team_name,  # 添加 key
                     "team_index": idx,
                     "total_seats": row.get("total_seats", 0),
                     "used_seats": row.get("used_seats", 0),
