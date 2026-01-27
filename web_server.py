@@ -693,6 +693,8 @@ def admin_stats():
                 }
             )
 
+        log.info(f"[Team Stats] 最终返回 {len(team_stats)} 个 Team 统计")
+
         return jsonify({
             "success": True,
             "data": {
