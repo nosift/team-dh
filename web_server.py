@@ -1172,6 +1172,65 @@ def admin_delete_lease():
         return jsonify({"success": False, "error": str(e)}), 500
 
 
+@app.route("/api/admin/leases/unbind", methods=["POST"])
+@require_admin
+def admin_unbind_lease():
+    """解绑用户（从工作空间移除并取消租约）"""
+    try:
+        payload = request.get_json(silent=True) or {}
+        email = (payload.get("email") or "").strip().lower()
+        if not email:
+            return jsonify({"success": False, "error": "email 不能为空"}), 400
+
+        # 获取租约信息
+        lease = db.get_member_lease(email)
+        if not lease:
+            return jsonify({"success": False, "error": "租约不存在"}), 404
+
+        team_name = lease.get("team_name")
+        if not team_name:
+            return jsonify({"success": False, "error": "租约缺少 Team 信息"}), 400
+
+        # 获取 Team 配置
+        team_config = config.resolve_team(team_name)
+        if not team_config:
+            return jsonify({"success": False, "error": f"Team {team_name} 配置不存在"}), 404
+
+        # 从 Team 移除用户
+        from team_service import remove_member_by_email
+        success, message = remove_member_by_email(team_config, email)
+
+        if not success:
+            log.warning(f"从 Team 移除用户失败: {message}，但仍会取消租约")
+
+        # 更新租约状态为 cancelled
+        db.update_member_lease_status(email=email, status="cancelled")
+
+        # 记录事件
+        db.add_member_lease_event(
+            email=email,
+            action="unbind",
+            from_team=team_name,
+            to_team=None,
+            message=f"管理员解绑用户（从 Team 移除: {message}）"
+        )
+
+        log.info(f"已解绑用户 {email}（Team: {team_name}）")
+
+        return jsonify({
+            "success": True,
+            "message": f"已解绑用户 {email}",
+            "details": {
+                "removed_from_team": success,
+                "remove_message": message
+            }
+        })
+
+    except Exception as e:
+        log.error(f"解绑用户失败: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
 @app.route("/api/admin/codes/<code>/status", methods=["PUT"])
 @require_admin
 def admin_update_code_status(code):

@@ -1856,6 +1856,7 @@
                             <td style="display:flex; gap:8px; flex-wrap:wrap;">
                                 <button class="action-btn enable" data-action="lease-view" data-email="${safeEmailAttr}" title="只查看该邮箱的转移相关记录">转移记录</button>
                                 <button class="action-btn enable" data-action="lease-transfer" data-email="${safeEmailAttr}" title="对该邮箱执行一次到期检查：仅到期才会尝试转移">执行转移</button>
+                                <button class="action-btn" style="background: #ff9500; color: white;" data-action="lease-unbind" data-email="${safeEmailAttr}" title="解绑用户：从工作空间移除并取消租约">解绑</button>
                                 <button class="action-btn danger" data-action="lease-delete" data-email="${safeEmailAttr}" title="删除该邮箱的租约，用户将永久退出自动转移">删除</button>
                             </td>
                         </tr>
@@ -1919,6 +1920,7 @@
 
             if (action === 'lease-view') loadLeaseEvents(email);
             else if (action === 'lease-transfer') runTransferForEmail(email);
+            else if (action === 'lease-unbind') unbindLease(email);
             else if (action === 'lease-delete') deleteLease(email);
         }, true);
 
@@ -2028,6 +2030,39 @@
                 loadLeases({ force: true });
             } catch (e) {
                 showToast('删除失败: ' + e.message, 'danger', 2600);
+            }
+        }
+
+        async function unbindLease(email) {
+            const ok = await uiConfirm(
+                `确定要解绑 ${email} 吗？\n\n此操作将：\n1. 从当前工作空间移除该用户\n2. 取消自动转移租约\n\n此操作不可恢复！`,
+                { title: '确认解绑', okText: '解绑' }
+            );
+            if (!ok) return;
+
+            try {
+                const res = await fetchJson('/api/admin/leases/unbind', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email })
+                });
+
+                if (res.success) {
+                    const details = res.details || {};
+                    let message = res.message || '解绑成功';
+                    if (!details.removed_from_team) {
+                        message += `\n\n注意：从 Team 移除失败（${details.remove_message}），但租约已取消`;
+                    }
+                    showToast(message, 'success', 3000);
+                } else {
+                    showToast(res.error || '解绑失败', 'danger', 2600);
+                }
+
+                cacheState.leases.ts = 0;
+                cacheState.leaseEvents.clear();
+                loadLeases({ force: true });
+            } catch (e) {
+                showToast('解绑失败: ' + e.message, 'danger', 2600);
             }
         }
 
