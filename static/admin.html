@@ -624,41 +624,81 @@
     <!-- Team 添加/编辑对话框 -->
     <div id="teamModal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0, 0, 0, 0.5); z-index: 1000; align-items: center; justify-content: center;">
         <div style="background: white; padding: 32px; border-radius: 16px; width: 90%; max-width: 600px; max-height: 90vh; overflow-y: auto;">
-            <h2 style="margin-bottom: 24px; color: #1d1d1f; font-size: 24px; font-weight: 600;" id="modalTitle">添加Team</h2>
+            <h2 style="margin-bottom: 16px; color: #1d1d1f; font-size: 24px; font-weight: 600;" id="modalTitle">添加Team</h2>
 
-            <div style="margin-bottom: 16px;">
-                <label style="display: block; margin-bottom: 8px; color: #1d1d1f; font-weight: 500;">Team 名称</label>
-                <input type="text" id="teamName" placeholder="例如：yulisutari（建议英文/数字/短横线，且唯一）" style="width: 100%; padding: 12px; border: 1px solid #d2d2d7; border-radius: 10px; font-size: 14px;">
+            <!-- 添加模式切换 -->
+            <div id="addModeSwitch" style="margin-bottom: 24px; display: flex; gap: 8px; border-bottom: 1px solid #e5e5e5; padding-bottom: 16px;">
+                <button onclick="switchAddMode('manual')" id="manualModeBtn" style="padding: 8px 16px; background: #000; color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 500;">手动填写</button>
+                <button onclick="switchAddMode('json')" id="jsonModeBtn" style="padding: 8px 16px; background: #f5f5f7; color: #1d1d1f; border: none; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 500;">快速添加（粘贴JSON）</button>
             </div>
 
-            <div style="margin-bottom: 16px;">
-                <label style="display: block; margin-bottom: 8px; color: #1d1d1f; font-weight: 500;">邮箱</label>
-                <input type="email" id="teamEmail" placeholder="team@example.com" style="width: 100%; padding: 12px; border: 1px solid #d2d2d7; border-radius: 10px; font-size: 14px;">
+            <!-- JSON 快速添加模式 -->
+            <div id="jsonAddMode" style="display: none;">
+                <div style="margin-bottom: 16px;">
+                    <label style="display: block; margin-bottom: 8px; color: #1d1d1f; font-weight: 500;">粘贴 Session JSON</label>
+                    <textarea id="teamJsonInput" rows="12" placeholder='粘贴从 https://chatgpt.com/api/auth/session 获取的完整 JSON，例如：
+{
+  "user": {"id": "user-xxx", "email": "xxx@example.com", ...},
+  "account": {"id": "xxx-xxx-xxx", "organizationId": "org-xxx", ...},
+  "accessToken": "eyJhbGci...",
+  ...
+}' style="width: 100%; padding: 12px; border: 1px solid #d2d2d7; border-radius: 10px; font-size: 13px; font-family: 'SF Mono', Monaco, monospace; resize: vertical;"></textarea>
+                    <div style="margin-top: 8px; font-size: 13px; color: #86868b;">
+                        提示: 访问
+                        <span class="copyable" data-copy="https://chatgpt.com/api/auth/session" title="点击复制" style="color:#000; cursor:pointer; text-decoration:underline;">https://chatgpt.com/api/auth/session</span>
+                        复制完整 JSON 并粘贴到上方
+                        <a href="https://chatgpt.com/api/auth/session" target="_blank" style="color:#86868b; margin-left:6px;">打开</a>
+                    </div>
+                </div>
+
+                <div style="margin-bottom: 16px;">
+                    <button onclick="parseTeamJson()" style="width: 100%; padding: 12px; background: #007aff; color: white; border: none; border-radius: 10px; cursor: pointer; font-weight: 500;">解析 JSON</button>
+                </div>
+
+                <div id="jsonParseResult" style="display: none; padding: 12px; background: #f5f5f7; border-radius: 10px; margin-bottom: 16px;">
+                    <div style="font-size: 13px; color: #1d1d1f; margin-bottom: 8px;">
+                        <strong>解析结果：</strong>
+                    </div>
+                    <div id="jsonParseDetails" style="font-size: 13px; color: #86868b; line-height: 1.6;"></div>
+                </div>
             </div>
 
-            <div style="margin-bottom: 16px;">
-                <label style="display: block; margin-bottom: 8px; color: #1d1d1f; font-weight: 500;">User ID</label>
-                <input type="text" id="teamUserId" placeholder="user-xxxxxxxx" style="width: 100%; padding: 12px; border: 1px solid #d2d2d7; border-radius: 10px; font-size: 14px;">
-            </div>
+            <!-- 手动填写模式 -->
+            <div id="manualAddMode">
+                <div style="margin-bottom: 16px;">
+                    <label style="display: block; margin-bottom: 8px; color: #1d1d1f; font-weight: 500;">Team 名称</label>
+                    <input type="text" id="teamName" placeholder="例如：yulisutari（建议英文/数字/短横线，且唯一）" style="width: 100%; padding: 12px; border: 1px solid #d2d2d7; border-radius: 10px; font-size: 14px;">
+                </div>
 
-            <div style="margin-bottom: 16px;">
-                <label style="display: block; margin-bottom: 8px; color: #1d1d1f; font-weight: 500;">Account ID</label>
-                <input type="text" id="teamAccountId" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" style="width: 100%; padding: 12px; border: 1px solid #d2d2d7; border-radius: 10px; font-size: 14px;">
-            </div>
+                <div style="margin-bottom: 16px;">
+                    <label style="display: block; margin-bottom: 8px; color: #1d1d1f; font-weight: 500;">邮箱</label>
+                    <input type="email" id="teamEmail" placeholder="team@example.com" style="width: 100%; padding: 12px; border: 1px solid #d2d2d7; border-radius: 10px; font-size: 14px;">
+                </div>
 
-            <div style="margin-bottom: 16px;">
-                <label style="display: block; margin-bottom: 8px; color: #1d1d1f; font-weight: 500;">Organization ID</label>
-                <input type="text" id="teamOrgId" placeholder="org-xxxxxxxx" style="width: 100%; padding: 12px; border: 1px solid #d2d2d7; border-radius: 10px; font-size: 14px;">
-            </div>
+                <div style="margin-bottom: 16px;">
+                    <label style="display: block; margin-bottom: 8px; color: #1d1d1f; font-weight: 500;">User ID</label>
+                    <input type="text" id="teamUserId" placeholder="user-xxxxxxxx" style="width: 100%; padding: 12px; border: 1px solid #d2d2d7; border-radius: 10px; font-size: 14px;">
+                </div>
 
-            <div style="margin-bottom: 24px;">
-                <label style="display: block; margin-bottom: 8px; color: #1d1d1f; font-weight: 500;">Access Token <span style="color: #86868b; font-weight: 400;">(可选，编辑时不填则不更新)</span></label>
-                <textarea id="teamAccessToken" rows="4" placeholder="eyJhbGci..." style="width: 100%; padding: 12px; border: 1px solid #d2d2d7; border-radius: 10px; font-size: 13px; font-family: 'SF Mono', Monaco, monospace;"></textarea>
-                <div style="margin-top: 8px; font-size: 13px; color: #86868b;">
-                    提示: 访问
-                    <span class="copyable" data-copy="https://chatgpt.com/api/auth/session" title="点击复制" style="color:#000; cursor:pointer; text-decoration:underline;">https://chatgpt.com/api/auth/session</span>
-                    获取 accessToken（点击链接复制）
-                    <a href="https://chatgpt.com/api/auth/session" target="_blank" style="color:#86868b; margin-left:6px;">打开</a>
+                <div style="margin-bottom: 16px;">
+                    <label style="display: block; margin-bottom: 8px; color: #1d1d1f; font-weight: 500;">Account ID</label>
+                    <input type="text" id="teamAccountId" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" style="width: 100%; padding: 12px; border: 1px solid #d2d2d7; border-radius: 10px; font-size: 14px;">
+                </div>
+
+                <div style="margin-bottom: 16px;">
+                    <label style="display: block; margin-bottom: 8px; color: #1d1d1f; font-weight: 500;">Organization ID</label>
+                    <input type="text" id="teamOrgId" placeholder="org-xxxxxxxx" style="width: 100%; padding: 12px; border: 1px solid #d2d2d7; border-radius: 10px; font-size: 14px;">
+                </div>
+
+                <div style="margin-bottom: 24px;">
+                    <label style="display: block; margin-bottom: 8px; color: #1d1d1f; font-weight: 500;">Access Token <span style="color: #86868b; font-weight: 400;">(可选，编辑时不填则不更新)</span></label>
+                    <textarea id="teamAccessToken" rows="4" placeholder="eyJhbGci..." style="width: 100%; padding: 12px; border: 1px solid #d2d2d7; border-radius: 10px; font-size: 13px; font-family: 'SF Mono', Monaco, monospace;"></textarea>
+                    <div style="margin-top: 8px; font-size: 13px; color: #86868b;">
+                        提示: 访问
+                        <span class="copyable" data-copy="https://chatgpt.com/api/auth/session" title="点击复制" style="color:#000; cursor:pointer; text-decoration:underline;">https://chatgpt.com/api/auth/session</span>
+                        获取 accessToken（点击链接复制）
+                        <a href="https://chatgpt.com/api/auth/session" target="_blank" style="color:#86868b; margin-left:6px;">打开</a>
+                    </div>
                 </div>
             </div>
 
@@ -2176,13 +2216,138 @@
             document.getElementById('teamAccountId').value = '';
             document.getElementById('teamOrgId').value = '';
             document.getElementById('teamAccessToken').value = '';
+            document.getElementById('teamJsonInput').value = '';
+            document.getElementById('jsonParseResult').style.display = 'none';
+
+            // 显示模式切换按钮，默认显示 JSON 模式
+            document.getElementById('addModeSwitch').style.display = 'flex';
+            switchAddMode('json');
+
             document.getElementById('teamModal').style.display = 'flex';
+        }
+
+        // 切换添加模式
+        function switchAddMode(mode) {
+            const manualMode = document.getElementById('manualAddMode');
+            const jsonMode = document.getElementById('jsonAddMode');
+            const manualBtn = document.getElementById('manualModeBtn');
+            const jsonBtn = document.getElementById('jsonModeBtn');
+
+            if (mode === 'manual') {
+                manualMode.style.display = 'block';
+                jsonMode.style.display = 'none';
+                manualBtn.style.background = '#000';
+                manualBtn.style.color = 'white';
+                jsonBtn.style.background = '#f5f5f7';
+                jsonBtn.style.color = '#1d1d1f';
+            } else {
+                manualMode.style.display = 'none';
+                jsonMode.style.display = 'block';
+                manualBtn.style.background = '#f5f5f7';
+                manualBtn.style.color = '#1d1d1f';
+                jsonBtn.style.background = '#000';
+                jsonBtn.style.color = 'white';
+            }
+        }
+
+        // 解析 Team JSON
+        function parseTeamJson() {
+            const jsonInput = document.getElementById('teamJsonInput').value.trim();
+            const resultDiv = document.getElementById('jsonParseResult');
+            const detailsDiv = document.getElementById('jsonParseDetails');
+
+            if (!jsonInput) {
+                showToast('请粘贴 JSON 数据', 'danger', 2000);
+                return;
+            }
+
+            try {
+                const data = JSON.parse(jsonInput);
+
+                // 提取字段
+                const userId = data.user?.id || '';
+                const email = data.user?.email || '';
+                const accountId = data.account?.id || '';
+                const orgId = data.account?.organizationId || '';
+                const accessToken = data.accessToken || '';
+
+                // 验证必填字段
+                const missing = [];
+                if (!userId) missing.push('user.id');
+                if (!email) missing.push('user.email');
+                if (!accountId) missing.push('account.id');
+                if (!orgId) missing.push('account.organizationId');
+                if (!accessToken) missing.push('accessToken');
+
+                if (missing.length > 0) {
+                    detailsDiv.innerHTML = `
+                        <div style="color: #ff3b30;">
+                            ❌ 缺少必填字段: ${escapeHtml(missing.join(', '))}
+                        </div>
+                    `;
+                    resultDiv.style.display = 'block';
+                    showToast('JSON 格式不完整', 'danger', 2000);
+                    return;
+                }
+
+                // 生成默认 Team 名称（使用邮箱前缀）
+                const defaultName = email.split('@')[0].replace(/[^a-zA-Z0-9-]/g, '-').toLowerCase();
+
+                // 填充表单
+                document.getElementById('teamName').value = defaultName;
+                document.getElementById('teamEmail').value = email;
+                document.getElementById('teamUserId').value = userId;
+                document.getElementById('teamAccountId').value = accountId;
+                document.getElementById('teamOrgId').value = orgId;
+                document.getElementById('teamAccessToken').value = accessToken;
+
+                // 显示解析结果
+                detailsDiv.innerHTML = `
+                    <div style="color: #34c759; margin-bottom: 8px;">
+                        ✅ 解析成功！已自动填充以下字段：
+                    </div>
+                    <div style="margin-left: 16px;">
+                        • Team 名称: <code>${escapeHtml(defaultName)}</code><br>
+                        • 邮箱: <code>${escapeHtml(email)}</code><br>
+                        • User ID: <code>${escapeHtml(userId.substring(0, 20))}...</code><br>
+                        • Account ID: <code>${escapeHtml(accountId.substring(0, 20))}...</code><br>
+                        • Organization ID: <code>${escapeHtml(orgId)}</code><br>
+                        • Access Token: <code>${escapeHtml(accessToken.substring(0, 20))}...</code>
+                    </div>
+                    <div style="margin-top: 8px; color: #007aff;">
+                        💡 请切换到"手动填写"模式查看和修改字段
+                    </div>
+                `;
+                resultDiv.style.display = 'block';
+
+                // 自动切换到手动模式
+                setTimeout(() => {
+                    switchAddMode('manual');
+                    showToast('已自动填充字段，请检查后保存', 'success', 2500);
+                }, 500);
+
+            } catch (error) {
+                detailsDiv.innerHTML = `
+                    <div style="color: #ff3b30;">
+                        ❌ JSON 解析失败: ${escapeHtml(error.message)}
+                    </div>
+                    <div style="margin-top: 8px; color: #86868b;">
+                        请确保粘贴的是完整的 JSON 对象
+                    </div>
+                `;
+                resultDiv.style.display = 'block';
+                showToast('JSON 格式错误', 'danger', 2000);
+            }
         }
 
         // 编辑 Team
         async function editTeam(index) {
             currentEditingTeamIndex = index;
             document.getElementById('modalTitle').textContent = '编辑Team';
+
+            // 隐藏模式切换按钮（编辑模式只能手动填写）
+            document.getElementById('addModeSwitch').style.display = 'none';
+            switchAddMode('manual');
 
             try {
                 const teams = await getTeams();
