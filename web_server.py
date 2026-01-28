@@ -1504,6 +1504,43 @@ def sync_team_created_time_api(index):
         return jsonify({"success": False, "error": str(e)}), 500
 
 
+@app.route("/api/admin/teams/<int:index>/check-status", methods=["POST"])
+@require_admin
+def check_team_status_api(index):
+    """检测 Team 状态（Token 是否有效）"""
+    try:
+        from team_manager import team_manager
+        from team_service import check_team_status
+        import config
+
+        teams = team_manager.get_team_list()
+        if index < 0 or index >= len(teams):
+            return jsonify({"success": False, "error": "Team 不存在"}), 404
+
+        team = teams[index]
+        team_name = team.get("name")
+
+        # 获取 Team 配置
+        team_cfg = config.resolve_team(team_name)
+        if not team_cfg:
+            return jsonify({
+                "success": False,
+                "error": "Team 配置不存在"
+            }), 404
+
+        # 检测状态
+        status = check_team_status(team_cfg)
+
+        return jsonify({
+            "success": True,
+            "data": status
+        })
+
+    except Exception as e:
+        log.error(f"检测 Team 状态失败: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
 @app.route("/api/admin/teams/<int:index>/generate-codes", methods=["POST"])
 @require_admin
 def admin_generate_codes_for_team(index):

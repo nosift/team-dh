@@ -689,6 +689,56 @@ def estimate_team_created_time(team_name: str) -> tuple[datetime | None, str]:
     return None, "unknown"
 
 
+def check_team_status(team: dict) -> dict:
+    """检测 Team 状态（Token 是否有效）
+
+    Args:
+        team: Team 配置
+
+    Returns:
+        dict: {"active": bool, "error": str | None, "details": dict}
+    """
+    try:
+        # 尝试获取订阅信息来验证 Token 是否有效
+        stats = get_team_stats(team)
+
+        if stats and "seats_entitled" in stats:
+            # Token 有效，Team 可用
+            return {
+                "active": True,
+                "error": None,
+                "details": stats
+            }
+        else:
+            # 无法获取统计信息，可能 Token 失效
+            return {
+                "active": False,
+                "error": "无法获取 Team 信息（Token 可能已失效）",
+                "details": {}
+            }
+    except Exception as e:
+        # 发生异常，Team 不可用
+        error_msg = str(e)
+        if "401" in error_msg or "403" in error_msg:
+            return {
+                "active": False,
+                "error": "Token 已失效或无权限",
+                "details": {}
+            }
+        elif "404" in error_msg:
+            return {
+                "active": False,
+                "error": "Team 不存在",
+                "details": {}
+            }
+        else:
+            return {
+                "active": False,
+                "error": f"检测失败: {error_msg}",
+                "details": {}
+            }
+
+
 def sync_team_created_time(team_name: str) -> dict:
     """同步 Team 创建时间
 
@@ -726,5 +776,5 @@ def sync_team_created_time(team_name: str) -> dict:
     else:
         return {
             "success": False,
-            "message": "无法获取或推断创建时间"
+            "message": "无法推断创建时间（该 Team 暂无兑换记录或成员加入记录）"
         }

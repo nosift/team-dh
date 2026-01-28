@@ -1508,15 +1508,23 @@
                     return;
                 }
 
-                let html = '<table><thead><tr><th>Team</th><th>总席位</th><th>已使用</th><th>待接受</th><th>可用席位</th><th>创建时间</th><th>使用时长</th><th>操作</th></tr></thead><tbody>';
+                let html = '<table><thead><tr><th>Team</th><th>状态</th><th>总席位</th><th>已使用</th><th>待接受</th><th>可用席位</th><th>创建时间</th><th>使用时长</th><th>操作</th></tr></thead><tbody>';
 
                 teams.forEach(team => {
                     const teamName = team.team_display_name || team.team_name || team.team_key || '-';
                     const safeTeamName = escapeHtml(teamName);
                     const teamIndex = team.team_index;
 
+                    // Team 状态（默认未知）
+                    let statusBadge = '<span class="badge badge-secondary" title="未检测">未知</span>';
+                    if (team.status === 'active') {
+                        statusBadge = '<span class="badge badge-success" title="Token 有效">正常</span>';
+                    } else if (team.status === 'inactive') {
+                        statusBadge = '<span class="badge badge-danger" title="Token 失效或无权限">停用</span>';
+                    }
+
                     // 处理创建时间
-                    let timeDisplay = '未知';
+                    let timeDisplay = '<span style="color: #86868b;" title="暂无兑换记录或成员加入记录">无法推断</span>';
                     let timeSource = '';
                     let usageDays = '-';
 
@@ -1533,11 +1541,11 @@
                         // 数据来源标识
                         const source = team.created_at_source || 'unknown';
                         if (source.startsWith('estimated_')) {
-                            timeSource = '<span style="color: #ffcc00;" title="推断时间">~</span>';
+                            timeSource = '<span style="color: #ffcc00;" title="推断时间（基于兑换记录或成员加入时间）">~</span>';
                         } else if (source === 'api') {
-                            timeSource = '<span style="color: #34c759;" title="已验证">✓</span>';
+                            timeSource = '<span style="color: #34c759;" title="已验证（来自 ChatGPT API）">✓</span>';
                         } else if (source === 'first_seen' || source === 'first_code') {
-                            timeSource = '<span style="color: #ffcc00;" title="首次记录">~</span>';
+                            timeSource = '<span style="color: #ffcc00;" title="首次记录（Team 添加时间）">~</span>';
                         } else {
                             timeSource = '<span style="color: #86868b;" title="未知">?</span>';
                         }
@@ -1546,6 +1554,7 @@
                     html += `
                         <tr>
                             <td><strong><span class="team-cell" title="${safeTeamName}">${safeTeamName}</span></strong></td>
+                            <td id="team-status-${teamIndex}">${statusBadge}</td>
                             <td>${team.total_seats}</td>
                             <td>${team.used_seats}</td>
                             <td>${team.pending_invites}</td>
@@ -1553,6 +1562,12 @@
                             <td>${timeSource} ${timeDisplay}</td>
                             <td>${usageDays}</td>
                             <td>
+                                <button class="action-btn" onclick="checkTeamStatus(${teamIndex})" title="检测状态">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <circle cx="12" cy="12" r="10"/>
+                                        <path d="M12 6v6l4 2"/>
+                                    </svg>
+                                </button>
                                 <button class="action-btn" onclick="syncTeamCreatedTime(${teamIndex})" title="同步创建时间">
                                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                         <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/>
@@ -1619,6 +1634,54 @@
                 btn.innerHTML = `
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/>
+                    </svg>
+                `;
+            }
+        }
+
+        // 检测 Team 状态
+        async function checkTeamStatus(teamIndex) {
+            const btn = event.target.closest('button');
+            if (!btn) return;
+
+            const statusCell = document.getElementById(`team-status-${teamIndex}`);
+            if (!statusCell) return;
+
+            btn.disabled = true;
+            btn.innerHTML = '<span class="loading" style="width: 12px; height: 12px; border-width: 2px;"></span>';
+            statusCell.innerHTML = '<span class="badge badge-secondary">检测中...</span>';
+
+            try {
+                const response = await fetch(`/api/admin/teams/${teamIndex}/check-status`, {
+                    method: 'POST'
+                });
+
+                const result = await response.json();
+
+                if (result.success && result.data) {
+                    const status = result.data;
+                    if (status.active) {
+                        statusCell.innerHTML = '<span class="badge badge-success" title="Token 有效">正常</span>';
+                        showToast('Team 状态正常', 'success', 1500);
+                    } else {
+                        const errorMsg = status.error || 'Token 失效';
+                        statusCell.innerHTML = `<span class="badge badge-danger" title="${escapeHtml(errorMsg)}">停用</span>`;
+                        showToast(`Team 不可用: ${errorMsg}`, 'danger', 3000);
+                    }
+                } else {
+                    statusCell.innerHTML = '<span class="badge badge-secondary" title="检测失败">未知</span>';
+                    showToast(result.error || '检测失败', 'danger');
+                }
+            } catch (error) {
+                console.error('检测 Team 状态失败:', error);
+                statusCell.innerHTML = '<span class="badge badge-secondary" title="检测失败">未知</span>';
+                showToast('检测失败', 'danger');
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = `
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="10"/>
+                        <path d="M12 6v6l4 2"/>
                     </svg>
                 `;
             }
