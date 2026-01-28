@@ -20,7 +20,7 @@ from team_service import invite_single_email, remove_member_by_email
 
 
 def _pick_next_team(*, current_account_id: str | None, current_team_name: str | None, email: str) -> list[dict]:
-    '''选择下一个 Team (轮询策略，只选择状态正常的 Team)'''
+    '''选择下一个 Team（优先选择时间最长的可用 Team）'''
     # 获取所有有效的 Team
     teams = [
         t
@@ -30,59 +30,72 @@ def _pick_next_team(*, current_account_id: str | None, current_team_name: str | 
     if len(teams) <= 1:
         return []
 
-    # 过滤掉状态不正常的 Team
-    active_teams = []
+    # 过滤掉状态不正常的 Team，并获取创建时间
+    active_teams_with_time = []
     for t in teams:
         team_name = t.get('name', '')
+
+        # 跳过当前 Team
+        if current_account_id and t.get('account_id') == current_account_id:
+            continue
+        if current_team_name and t.get('name') == current_team_name:
+            continue
+
+        # 检查 Team 状态
         team_status = db.get_team_status(team_name)
 
         # 如果没有状态信息，默认认为是正常的（向后兼容）
         if team_status is None:
-            active_teams.append(t)
+            # 获取创建时间（用于排序）
+            team_time_info = db.get_team_created_at(team_name)
+            created_at = None
+            if team_time_info and team_time_info.get('created_at'):
+                try:
+                    created_at = datetime.fromisoformat(team_time_info['created_at'])
+                except Exception:
+                    pass
+
+            active_teams_with_time.append({
+                'team': t,
+                'created_at': created_at or datetime.now()  # 如果没有创建时间，使用当前时间
+            })
             continue
 
         # 只选择状态为正常的 Team
         is_active = team_status.get('is_active', 1)
         if is_active:
-            active_teams.append(t)
+            # 获取创建时间（用于排序）
+            team_time_info = db.get_team_created_at(team_name)
+            created_at = None
+            if team_time_info and team_time_info.get('created_at'):
+                try:
+                    created_at = datetime.fromisoformat(team_time_info['created_at'])
+                except Exception:
+                    pass
+
+            active_teams_with_time.append({
+                'team': t,
+                'created_at': created_at or datetime.now()
+            })
         else:
             log.warning(f"跳过停用的 Team: {team_name} ({team_status.get('status_error', '未知错误')})")
 
     # 如果没有可用的 Team，返回空列表
-    if len(active_teams) <= 1:
-        if len(active_teams) == 1 and (
-            (current_account_id and active_teams[0].get('account_id') == current_account_id) or
-            (current_team_name and active_teams[0].get('name') == current_team_name)
-        ):
-            log.warning(f"没有可用的 Team 进行转移（当前 Team: {current_team_name}）")
-            return []
-        if len(active_teams) == 0:
-            log.error("没有状态正常的 Team 可用于转移")
-            return []
+    if len(active_teams_with_time) == 0:
+        log.error("没有状态正常的 Team 可用于转移")
+        return []
 
-    def idx_of() -> int | None:
-        if current_account_id:
-            for i, t in enumerate(active_teams):
-                if (t.get('account_id') or '') == current_account_id:
-                    return i
-        if current_team_name:
-            for i, t in enumerate(active_teams):
-                if (t.get('name') or '') == current_team_name:
-                    return i
-        return None
+    # 按创建时间排序（最早的在前面）
+    active_teams_with_time.sort(key=lambda x: x['created_at'])
 
-    cur_idx = idx_of()
-    start = (cur_idx + 1) if cur_idx is not None else (abs(hash(email)) % len(active_teams))
-    ordered: list[dict] = []
-    for i in range(len(active_teams)):
-        t = active_teams[(start + i) % len(active_teams)]
-        if current_account_id and (t.get('account_id') or '') == current_account_id:
-            continue
-        if current_team_name and (t.get('name') or '') == current_team_name:
-            continue
-        ordered.append(t)
+    # 提取 Team 配置
+    ordered = [item['team'] for item in active_teams_with_time]
 
-    log.info(f"为 {email} 选择了 {len(ordered)} 个候选 Team（共 {len(teams)} 个 Team，{len(active_teams)} 个正常）")
+    log.info(f"为 {email} 选择了 {len(ordered)} 个候选 Team（共 {len(teams)} 个 Team，按创建时间排序）")
+    if ordered:
+        first_team = ordered[0]
+        log.info(f"优先选择最早的 Team: {first_team.get('name')} (创建于 {active_teams_with_time[0]['created_at'].strftime('%Y-%m-%d')})")
+
     return ordered
 
 

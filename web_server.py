@@ -18,6 +18,7 @@ from transfer_scheduler import start_transfer_worker
 from transfer_scheduler import run_transfer_once, sync_joined_leases_once, sync_joined_leases_once_detailed, run_transfer_for_email, sync_joined_lease_for_email_once_detailed
 from monitor import monitor, run_monitor_loop
 from team_status_checker import start_team_status_checker
+from abnormal_transfer_checker import start_abnormal_transfer_checker
 
 
 app = Flask(__name__)
@@ -52,6 +53,12 @@ if os.getenv("TEAM_STATUS_CHECK_ENABLED", "true").lower() != "false":
     # 默认 3 小时检测一次，可通过环境变量配置
     check_interval = int(os.getenv("TEAM_STATUS_CHECK_INTERVAL", "10800"))  # 10800 秒 = 3 小时
     start_team_status_checker(interval=check_interval)
+
+# 后台：异常转移检测（默认开启，通过 ABNORMAL_TRANSFER_CHECK_ENABLED=false 关闭）
+if os.getenv("ABNORMAL_TRANSFER_CHECK_ENABLED", "true").lower() != "false":
+    # 默认 30 分钟检测一次，可通过环境变量配置
+    abnormal_check_interval = int(os.getenv("ABNORMAL_TRANSFER_CHECK_INTERVAL", "1800"))  # 1800 秒 = 30 分钟
+    start_abnormal_transfer_checker(interval=abnormal_check_interval)
 
 
 _last_config_reload_sig: tuple[float, float, int, int] | None = None
