@@ -17,13 +17,14 @@ from team_service import get_member_info_for_email
 from transfer_scheduler import start_transfer_worker
 from transfer_scheduler import run_transfer_once, sync_joined_leases_once, sync_joined_leases_once_detailed, run_transfer_for_email, sync_joined_lease_for_email_once_detailed
 from monitor import monitor, run_monitor_loop
+from team_status_checker import start_team_status_checker
 
 
 app = Flask(__name__)
 
 # ==================== Session / Secret Key ====================
 # 多进程(gunicorn 多 worker)场景下，secret_key 必须固定，否则登录态会在不同 worker 间随机失效，
-# 前端请求 /api/* 会被重定向到 /admin/login，导致出现 “<!DOCTYPE ... is not valid JSON”。
+# 前端请求 /api/* 会被重定向到 /admin/login，导致出现 "<!DOCTYPE ... is not valid JSON"。
 _secret_key = (
     os.getenv("SECRET_KEY")
     or os.getenv("FLASK_SECRET_KEY")
@@ -45,6 +46,12 @@ start_transfer_worker()
 if os.getenv("MONITOR_ENABLED", "true").lower() != "false":
     monitor_interval = int(os.getenv("MONITOR_INTERVAL", "300"))  # 默认 5 分钟
     run_monitor_loop(interval=monitor_interval)
+
+# 后台：Team 状态检测（默认开启，通过 TEAM_STATUS_CHECK_ENABLED=false 关闭）
+if os.getenv("TEAM_STATUS_CHECK_ENABLED", "true").lower() != "false":
+    # 默认 3 小时检测一次，可通过环境变量配置
+    check_interval = int(os.getenv("TEAM_STATUS_CHECK_INTERVAL", "10800"))  # 10800 秒 = 3 小时
+    start_team_status_checker(interval=check_interval)
 
 
 _last_config_reload_sig: tuple[float, float, int, int] | None = None
@@ -677,6 +684,18 @@ def admin_stats():
                 if not (created_at.endswith("Z") or "+" in created_at or "-" in created_at[10:]):
                     created_at = created_at + "Z"
 
+            # 获取 Team 状态信息
+            team_status_info = db.get_team_status(team_name)
+            status = "unknown"
+            status_error = None
+            last_checked_at = None
+
+            if team_status_info:
+                is_active = team_status_info.get("is_active", 1)
+                status = "active" if is_active else "inactive"
+                status_error = team_status_info.get("status_error")
+                last_checked_at = team_status_info.get("last_checked_at")
+
             team_stats.append(
                 {
                     "team_name": team_name,
@@ -690,6 +709,9 @@ def admin_stats():
                     "created_at": created_at,
                     "created_at_source": created_at_source,
                     "last_updated": last_updated,
+                    "status": status,
+                    "status_error": status_error,
+                    "last_checked_at": last_checked_at,
                 }
             )
 

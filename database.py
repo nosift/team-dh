@@ -146,6 +146,17 @@ class Database:
                 cursor.execute("ALTER TABLE teams_stats ADD COLUMN created_at_source VARCHAR(20)")
                 log.info("已添加 created_at_source 字段到 teams_stats 表")
 
+            # 添加 Team 状态检测字段
+            if "is_active" not in teams_stats_cols:
+                cursor.execute("ALTER TABLE teams_stats ADD COLUMN is_active INTEGER DEFAULT 1")
+                log.info("已添加 is_active 字段到 teams_stats 表")
+            if "status_error" not in teams_stats_cols:
+                cursor.execute("ALTER TABLE teams_stats ADD COLUMN status_error TEXT")
+                log.info("已添加 status_error 字段到 teams_stats 表")
+            if "last_checked_at" not in teams_stats_cols:
+                cursor.execute("ALTER TABLE teams_stats ADD COLUMN last_checked_at DATETIME")
+                log.info("已添加 last_checked_at 字段到 teams_stats 表")
+
             # 成员租约：用于"按月到期自动转移到新 Team"
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS member_leases (
@@ -1362,6 +1373,46 @@ class Database:
             if row and row["earliest"]:
                 return datetime.fromisoformat(row["earliest"])
             return None
+
+    def update_team_status(
+        self,
+        team_name: str,
+        is_active: bool,
+        status_error: Optional[str] = None,
+        last_checked_at: Optional[datetime] = None
+    ):
+        """更新 Team 状态"""
+        if last_checked_at is None:
+            last_checked_at = datetime.now()
+
+        with self.get_connection() as conn:
+            conn.execute("""
+                INSERT INTO teams_stats (team_name, is_active, status_error, last_checked_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(team_name) DO UPDATE SET
+                    is_active = ?,
+                    status_error = ?,
+                    last_checked_at = ?
+            """, (
+                team_name,
+                1 if is_active else 0,
+                status_error,
+                last_checked_at.isoformat() if isinstance(last_checked_at, datetime) else last_checked_at,
+                1 if is_active else 0,
+                status_error,
+                last_checked_at.isoformat() if isinstance(last_checked_at, datetime) else last_checked_at
+            ))
+
+    def get_team_status(self, team_name: str) -> Optional[Dict[str, Any]]:
+        """获取 Team 状态"""
+        with self.get_connection() as conn:
+            cursor = conn.execute("""
+                SELECT is_active, status_error, last_checked_at
+                FROM teams_stats
+                WHERE team_name = ?
+            """, (team_name,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
 
     # ==================== 兑换码分组管理 ====================
 
