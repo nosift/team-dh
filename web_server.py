@@ -1392,6 +1392,9 @@ def admin_add_team():
     """添加新 Team"""
     try:
         from team_manager import team_manager
+        from team_service import get_team_stats, sync_team_created_time
+        import config
+
         data = request.get_json()
 
         name = data.get("name", "").strip()
@@ -1407,6 +1410,36 @@ def admin_add_team():
         result = team_manager.add_team(name, email, user_id, account_id, org_id, access_token)
 
         if result["success"]:
+            # 自动刷新该 Team 的统计信息
+            try:
+                # 重新加载配置以获取新添加的 Team
+                config.reload_teams()
+                team_config = config.resolve_team(name)
+
+                if team_config:
+                    # 获取席位统计
+                    stats = get_team_stats(team_config)
+                    if stats:
+                        seats_entitled = stats.get("seats_entitled", 0)
+                        seats_in_use = stats.get("seats_in_use", 0)
+                        pending_invites = stats.get("pending_invites", 0)
+
+                        # 更新数据库
+                        db.update_team_stats(
+                            team_name=name,
+                            total_seats=seats_entitled,
+                            used_seats=seats_in_use,
+                            pending_invites=pending_invites
+                        )
+
+                        log.info(f"已自动刷新 Team {name} 的统计信息: {seats_entitled} 席位")
+
+                    # 同步创建时间
+                    sync_team_created_time(name)
+
+            except Exception as e:
+                log.warning(f"自动刷新 Team 统计失败（不影响添加）: {e}")
+
             return jsonify(result), 201
         else:
             return jsonify(result), 500
@@ -1422,6 +1455,9 @@ def admin_update_team(index):
     """更新 Team 信息"""
     try:
         from team_manager import team_manager
+        from team_service import get_team_stats
+        import config
+
         data = request.get_json()
 
         name = data.get("name", "").strip()
@@ -1437,6 +1473,31 @@ def admin_update_team(index):
         result = team_manager.update_team(index, name, email, user_id, account_id, org_id, access_token)
 
         if result["success"]:
+            # 如果更新了 access_token，自动刷新统计信息
+            if access_token:
+                try:
+                    config.reload_teams()
+                    team_config = config.resolve_team(name)
+
+                    if team_config:
+                        stats = get_team_stats(team_config)
+                        if stats:
+                            seats_entitled = stats.get("seats_entitled", 0)
+                            seats_in_use = stats.get("seats_in_use", 0)
+                            pending_invites = stats.get("pending_invites", 0)
+
+                            db.update_team_stats(
+                                team_name=name,
+                                total_seats=seats_entitled,
+                                used_seats=seats_in_use,
+                                pending_invites=pending_invites
+                            )
+
+                            log.info(f"已自动刷新 Team {name} 的统计信息")
+
+                except Exception as e:
+                    log.warning(f"自动刷新 Team 统计失败（不影响更新）: {e}")
+
             return jsonify(result)
         else:
             return jsonify(result), 404
