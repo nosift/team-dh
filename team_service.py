@@ -212,6 +212,7 @@ def get_team_stats(team: dict) -> dict:
     Returns:
         dict: {"seats_in_use": int, "seats_entitled": int, "pending_invites": int}
     """
+    team_name = team.get("name", "Unknown")
     headers = build_invite_headers(team)
 
     # 获取订阅信息
@@ -220,11 +221,14 @@ def get_team_stats(team: dict) -> dict:
     try:
         response = http_session.get(subs_url, headers=headers, timeout=REQUEST_TIMEOUT)
 
+        log.info(f"[Team Stats] {team_name} - 订阅 API 响应: HTTP {response.status_code}")
+
         if response.status_code != 200:
-            log.warning(f"获取 Team 统计失败: HTTP {response.status_code}")
+            log.warning(f"[Team Stats] {team_name} - 获取统计失败: HTTP {response.status_code}, 响应: {response.text[:200]}")
             return {}
 
         data = response.json() or {}
+        log.info(f"[Team Stats] {team_name} - API 返回数据: seats_in_use={data.get('seats_in_use')}, seats_entitled={data.get('seats_entitled')}")
 
         # 订阅接口的 pending_invites 有时不准确，这里用 invites 列表兜底（取更大值）
         pending_from_subs = (
@@ -249,7 +253,7 @@ def get_team_stats(team: dict) -> dict:
         }
 
     except Exception as e:
-        log.warning(f"获取 Team 统计异常: {e}")
+        log.warning(f"[Team Stats] {team_name} - 获取统计异常: {e}")
         return {}
 
 
@@ -698,12 +702,20 @@ def check_team_status(team: dict) -> dict:
     Returns:
         dict: {"active": bool, "error": str | None, "details": dict}
     """
+    team_name = team.get("name", "Unknown")
+    log.info(f"[Team Status] 开始检测 Team: {team_name}")
+
     try:
         # 尝试获取订阅信息来验证 Token 是否有效
         stats = get_team_stats(team)
 
-        if stats and "seats_entitled" in stats:
+        log.info(f"[Team Status] {team_name} - get_team_stats 返回: {stats}")
+
+        # 检查是否成功获取到席位信息
+        # 注意：空字典 {} 是 falsy，但我们需要检查是否包含关键字段
+        if stats and "seats_entitled" in stats and stats.get("seats_entitled") is not None:
             # Token 有效，Team 可用
+            log.info(f"[Team Status] {team_name} - 状态正常，席位: {stats.get('seats_in_use')}/{stats.get('seats_entitled')}")
             return {
                 "active": True,
                 "error": None,
@@ -711,14 +723,17 @@ def check_team_status(team: dict) -> dict:
             }
         else:
             # 无法获取统计信息，可能 Token 失效
+            log.warning(f"[Team Status] {team_name} - 无法获取统计信息，stats={stats}")
             return {
                 "active": False,
-                "error": "无法获取 Team 信息（Token 可能已失效）",
-                "details": {}
+                "error": "无法获取 Team 信息（Token 可能已失效或 API 返回异常）",
+                "details": {"raw_stats": stats}
             }
     except Exception as e:
         # 发生异常，Team 不可用
         error_msg = str(e)
+        log.error(f"[Team Status] {team_name} - 检测异常: {error_msg}")
+
         if "401" in error_msg or "403" in error_msg:
             return {
                 "active": False,
