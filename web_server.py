@@ -1464,10 +1464,29 @@ def admin_batch_update_code_group():
 @app.route("/api/admin/teams", methods=["GET"])
 @require_admin
 def admin_list_teams():
-    """获取 Team 列表"""
+    """获取 Team 列表（包含席位统计）"""
     try:
         from team_manager import team_manager
         teams = team_manager.get_team_list()
+
+        # 为每个 Team 添加席位统计信息
+        for team in teams:
+            team_name = team.get("name")
+            if team_name:
+                # 从数据库获取席位统计
+                team_stats = db.get_team_stats(team_name)
+                if team_stats:
+                    team["total_seats"] = team_stats.get("total_seats", 0)
+                    team["used_seats"] = team_stats.get("used_seats", 0)
+                    team["pending_invites"] = team_stats.get("pending_invites", 0)
+                    team["available_seats"] = team_stats.get("available_seats", 0)
+                else:
+                    # 如果没有统计数据，设置默认值
+                    team["total_seats"] = 0
+                    team["used_seats"] = 0
+                    team["pending_invites"] = 0
+                    team["available_seats"] = 0
+
         return jsonify({"success": True, "data": teams})
     except Exception as e:
         log.error(f"获取 Team 列表失败: {e}")

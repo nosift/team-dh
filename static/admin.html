@@ -186,6 +186,11 @@
             color: #6e1616;
         }
 
+        .badge.secondary {
+            background: #f5f5f7;
+            color: #86868b;
+        }
+
         .badge.info {
             background: #f5f5f7;
             color: #1d1d1f;
@@ -2206,7 +2211,7 @@
             teamListTable.innerHTML = '<div class="loading">加载中...</div>';
             try {
                 const teams = await getTeams(options);
-                let html = '<table><thead><tr><th>Team名称</th><th>邮箱</th><th>Account ID</th><th>Token状态</th><th>操作</th></tr></thead><tbody>';
+                let html = '<table><thead><tr><th>Team名称</th><th>邮箱</th><th>Account ID</th><th>可用席位</th><th>Token状态</th><th>操作</th></tr></thead><tbody>';
 
                 teams.forEach(team => {
                     const tokenBadge = team.has_token ?
@@ -2218,11 +2223,36 @@
                     const safeName = escapeHtml(team.name);
                     const safeEmail = escapeHtml(team.email);
 
+                    // 席位信息
+                    const totalSeats = team.total_seats || 0;
+                    const usedSeats = team.used_seats || 0;
+                    const pendingInvites = team.pending_invites || 0;
+                    const availableSeats = team.available_seats || 0;
+
+                    // 根据可用席位数量显示不同颜色
+                    let seatsBadgeClass = 'success';
+                    let seatsText = `${availableSeats}`;
+
+                    if (totalSeats === 0) {
+                        seatsBadgeClass = 'secondary';
+                        seatsText = '未统计';
+                    } else if (availableSeats === 0) {
+                        seatsBadgeClass = 'danger';
+                        seatsText = '已满';
+                    } else if (availableSeats <= 2) {
+                        seatsBadgeClass = 'warning';
+                    }
+
+                    const seatsInfo = totalSeats > 0
+                        ? `<span class="badge ${seatsBadgeClass}" title="总席位: ${totalSeats}\n已用: ${usedSeats}\n待定: ${pendingInvites}\n可用: ${availableSeats}">${seatsText}</span>`
+                        : '<span class="badge secondary">未统计</span>';
+
                     html += `
                         <tr>
                             <td><strong><span class="team-cell" title="${safeName}">${safeName}</span></strong></td>
                             <td>${safeEmail}</td>
                             <td><code>${accountIdDisplay}</code></td>
+                            <td>${seatsInfo}</td>
                             <td>${tokenBadge}</td>
                             <td>
                                 <button class="action-btn enable" data-team-action="edit" data-index="${team.index}">编辑</button>

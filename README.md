@@ -29,9 +29,11 @@ Team-DH 是一个功能完整的 **ChatGPT Team 席位管理系统**，提供：
 ### 核心价值
 
 - **席位复用**: 通过自动转移机制，一个席位可以服务多个用户（按月轮换）
+- **三层保护**: Team 状态检测 + 异常转移 + 到期转移，确保用户始终可用 ⭐
 - **灵活管理**: 支持多 Team 管理、批量生成兑换码、手动干预
+- **智能监控**: 实时监控 Team 状态、席位使用率、转移失败等
 - **成本优化**: 最大化 Team 席位利用率，降低运营成本
-- **用户友好**: 简单的兑换流程，自动化的席位续期
+- **用户友好**: 简单的兑换流程，自动化的席位续期，无感切换
 
 ---
 
@@ -53,18 +55,29 @@ Team-DH 是一个功能完整的 **ChatGPT Team 席位管理系统**，提供：
 - ✅ 批量兑换支持（最多 20 个兑换码）
 
 ### 自动转移系统
-- ✅ 按月自动转移到期成员
-- ✅ 智能 Team 选择（轮询，避免当前 Team）
+- ✅ 按月自动转移到期成员（到期转移）
+- ✅ Team 不可用时立即转移（异常转移）⭐
+- ✅ 智能 Team 选择（优先最早创建的 Team）
 - ✅ 自动同步用户加入时间（`joined_at`）
 - ✅ 失败重试机制（指数退避）
 - ✅ 手动转移/强制转移（管理后台）
 - ✅ 完整审计日志（`member_lease_events`）
 
+### 监控和告警系统 ⭐
+- ✅ Team 状态定期检测（每 3 小时）
+- ✅ 异常转移检测（每 30 分钟）
+- ✅ Team 席位使用率监控（≥85% 警告，≥95% 严重）
+- ✅ 转移失败检测和告警
+- ✅ 数据库性能监控
+- ✅ 系统健康检查
+- ✅ 告警管理界面（查看、筛选、标记已解决）
+
 ### 管理后台
 - ✅ 实时仪表板（Team 统计、兑换记录、成员租约）
-- ✅ Team 管理（添加/编辑/删除 Team）
+- ✅ Team 管理（添加/编辑/删除 Team、状态显示）
 - ✅ 兑换记录查询（支持邮箱/兑换码搜索）
-- ✅ 成员租约管理（查看状态、手动转移、查看事件）
+- ✅ 成员租约管理（查看状态、手动转移、解绑、查看事件）
+- ✅ 监控告警（实时告警、级别筛选、标记已解决）⭐
 - ✅ 批量操作（删除兑换码/记录）
 - ✅ 权限控制（密码认证、Session 管理）
 
@@ -221,12 +234,26 @@ services:
     volumes:
       - ./data:/data
     environment:
+      # 基础配置
       - ADMIN_PASSWORD=your-secure-password
       - SECRET_KEY=${SECRET_KEY}
       - DATA_DIR=/data
       - REDEMPTION_DATABASE_FILE=/data/redemption.db
       - TRUST_PROXY=true
+
+      # 自动转移配置
       - AUTO_TRANSFER_ENABLED=true
+      - AUTO_TRANSFER_TERM_MONTHS=1
+      - AUTO_TRANSFER_POLL_SECONDS=300
+      - AUTO_TRANSFER_AUTO_LEAVE_OLD_TEAM=true
+
+      # 监控和保护配置（推荐启用）
+      - TEAM_STATUS_CHECK_ENABLED=true
+      - TEAM_STATUS_CHECK_INTERVAL=7200
+      - ABNORMAL_TRANSFER_CHECK_ENABLED=true
+      - ABNORMAL_TRANSFER_CHECK_INTERVAL=1800
+      - MONITOR_ENABLED=true
+      - MONITOR_INTERVAL=300
     restart: unless-stopped
 ```
 
@@ -261,11 +288,27 @@ docker-compose up -d
 
 | 环境变量 | 说明 | 默认值 |
 |---------|------|--------|
-| `AUTO_TRANSFER_ENABLED` | 启用自动转移 | `false` |
-| `AUTO_TRANSFER_POLL_SECONDS` | 轮询间隔（秒） | `300` |
+| `AUTO_TRANSFER_ENABLED` | 启用到期转移 | `false` |
+| `AUTO_TRANSFER_POLL_SECONDS` | 到期转移轮询间隔（秒） | `300` |
 | `AUTO_TRANSFER_TERM_MONTHS` | 租约期限（月） | `1` |
 | `AUTO_TRANSFER_AUTO_LEAVE_OLD_TEAM` | 自动离开旧 Team | `true` |
 | `AUTO_TRANSFER_ALLOW_APPROX_JOIN_AT` | 允许近似加入时间 | `false` |
+
+### 监控和保护配置 ⭐
+
+| 环境变量 | 说明 | 默认值 |
+|---------|------|--------|
+| `TEAM_STATUS_CHECK_ENABLED` | 启用 Team 状态检测 | `true` |
+| `TEAM_STATUS_CHECK_INTERVAL` | Team 状态检测间隔（秒） | `10800` (3小时) |
+| `ABNORMAL_TRANSFER_CHECK_ENABLED` | 启用异常转移检测 | `true` |
+| `ABNORMAL_TRANSFER_CHECK_INTERVAL` | 异常转移检测间隔（秒） | `1800` (30分钟) |
+| `MONITOR_ENABLED` | 启用监控和告警 | `true` |
+| `MONITOR_INTERVAL` | 监控检测间隔（秒） | `300` (5分钟) |
+
+**三层保护机制**:
+- **第一层**: Team 状态检测（每 3 小时）- 提前发现问题
+- **第二层**: 异常转移（每 30 分钟）- 快速响应，确保可用
+- **第三层**: 到期转移（每 5 分钟）- 周期管理，席位复用
 
 ### Team 配置
 

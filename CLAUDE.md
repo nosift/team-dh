@@ -2,7 +2,7 @@
 
 > 本文档用于记录 Claude 与项目的协作历史、当前任务、决策记录和常见问题
 
-**最后更新**: 2026-01-27 (完成前端用户体验优化)
+**最后更新**: 2026-01-28 (完成异常转移、Team 状态监控和智能选择策略)
 **项目状态**: 🟢 活跃开发中
 
 ---
@@ -31,9 +31,59 @@ Team-DH 是一个面向 Zeabur/容器部署的 **ChatGPT Team 席位兑换码系
 
 ### 核心价值
 - **席位复用**: 通过自动转移实现席位的循环利用
+- **无感切换**: 到期转移 + 异常转移，确保用户始终可用
+- **三层保护**: Team 状态检测 + 异常转移 + 到期转移，多重保障
+- **智能监控**: Team 状态检测、异常告警、自动恢复
 - **灵活管理**: 支持多 Team 管理、兑换码批量生成
 - **安全可靠**: 并发锁、IP 限流、审计日志
 - **云原生**: 支持 Docker、Zeabur、Railway 等平台
+
+### 三层保护机制 ⭐
+
+系统通过三层机制确保用户始终可用：
+
+**第一层：Team 状态检测** (预防)
+- **频率**: 每 3 小时（可配置）
+- **作用**: 定期检测所有 Team 的 Token 是否有效
+- **结果**: 更新数据库状态（is_active, status_error）
+- **优势**: 提前发现问题，前端实时显示状态
+
+**第二层：异常转移** (快速响应)
+- **频率**: 每 30 分钟（可配置）
+- **作用**: 检查活跃租约的 Team 状态，如不可用立即转移
+- **触发**: Team Token 失效、停用、删除等
+- **优势**: 快速响应（30分钟内），确保用户无感切换
+
+**第三层：到期转移** (周期管理)
+- **频率**: 每 5 分钟（可配置）
+- **作用**: 检查租约是否到期，到期后转移到新 Team
+- **触发**: 租约到期（如每月转移）
+- **优势**: 实现席位复用，周期性管理
+
+**工作流程**:
+```
+启动后 10 秒  → Team 状态检测（首次）
+启动后 30 秒  → 异常转移检测（首次）
+启动后 60 秒  → 到期转移检测（首次）
+    ↓
+每 3 小时     → Team 状态检测（定期）
+每 30 分钟    → 异常转移检测（定期）
+每 5 分钟     → 到期转移检测（定期）
+每 5 分钟     → 监控告警检测（定期）
+```
+
+**配置示例**:
+```bash
+# 生产环境（推荐）
+TEAM_STATUS_CHECK_INTERVAL=7200      # 2 小时
+ABNORMAL_TRANSFER_CHECK_INTERVAL=1800 # 30 分钟
+AUTO_TRANSFER_POLL_SECONDS=300        # 5 分钟
+
+# 高频检测（Token 经常失效）
+TEAM_STATUS_CHECK_INTERVAL=3600      # 1 小时
+ABNORMAL_TRANSFER_CHECK_INTERVAL=600  # 10 分钟
+AUTO_TRANSFER_POLL_SECONDS=180        # 3 分钟
+```
 
 ### 技术栈
 - **后端**: Python 3.12+, Flask, SQLite
@@ -51,13 +101,87 @@ Team-DH 是一个面向 Zeabur/容器部署的 **ChatGPT Team 席位兑换码系
 ### 待办事项
 
 **功能实现** (部分完成，详见 docs/IMPLEMENTATION_STATUS.md):
-1. Team 开通时间识别 (后端 100%，前端待完成，约 1-2 小时)
-2. 兑换码分组管理 (设计 100%，实现待完成，约 7 小时)
-3. 转移服务优化 (审查 100%，实现待完成，约 4-6 小时)
+1. 兑换码分组管理 (设计 100%，实现待完成，约 7 小时)
 
 ---
 
 ## ✅ 已完成任务
+
+### 2026-01-28
+
+- [x] **异常转移和智能监控系统** (完成时间: 2026-01-28)
+  - ✅ Team 状态定期检测
+    - 后台线程定期检测所有 Team 的 Token 是否有效
+    - 默认每 3 小时检测一次（可配置）
+    - 检测结果存储到数据库（is_active, status_error, last_checked_at）
+    - 前端自动显示 Team 状态（正常/停用/未知）
+  - ✅ 异常转移检测
+    - 定期检查活跃租约的 Team 状态
+    - 如果 Team 不可用，立即触发转移（不等待到期）
+    - 默认每 30 分钟检测一次（可配置）
+    - 确保用户始终可用，实现无感切换
+  - ✅ Team 选择策略优化
+    - 改为选择"时间最长"（最早创建）的可用 Team
+    - 不再使用轮询策略
+    - 按 Team 创建时间排序，优先选择最早的
+    - 确保转移到最稳定的 Team
+  - ✅ 解绑功能
+    - 从工作空间移除用户
+    - 取消自动转移租约
+    - 前端添加"解绑"按钮
+    - 记录解绑事件
+
+**技术实现**:
+- `team_status_checker.py`: Team 状态检测模块
+- `abnormal_transfer_checker.py`: 异常转移检测模块
+- `transfer_executor.py`: 优化 Team 选择策略
+- `database.py`: 添加状态字段（is_active, status_error, last_checked_at）
+- `web_server.py`: 启动后台任务，添加解绑 API
+- `static/admin.html`: 添加解绑按钮和状态显示
+
+**环境变量配置**:
+```bash
+# Team 状态检测
+TEAM_STATUS_CHECK_ENABLED=true
+TEAM_STATUS_CHECK_INTERVAL=10800  # 3 小时
+
+# 异常转移检测
+ABNORMAL_TRANSFER_CHECK_ENABLED=true
+ABNORMAL_TRANSFER_CHECK_INTERVAL=1800  # 30 分钟
+
+# 监控和告警
+MONITOR_ENABLED=true
+MONITOR_INTERVAL=300  # 5 分钟
+```
+
+**核心功能**:
+1. **到期转移**: 租约到期后自动转移到可用 Team
+2. **异常转移**: Team 不可用时立即转移，不等待到期
+3. **智能选择**: 优先选择最早创建的稳定 Team
+4. **状态监控**: 定期检测 Team 状态，自动更新
+5. **解绑功能**: 从工作空间移除用户并取消租约
+
+**工作流程**:
+- 启动后 10 秒：首次 Team 状态检测
+- 启动后 30 秒：首次异常转移检测
+- 每 3 小时：定期 Team 状态检测
+- 每 30 分钟：定期异常转移检测
+- 每 5 分钟：监控和告警检测
+
+- [x] **Team 快速添加功能** (完成时间: 2026-01-28)
+  - ✅ 支持粘贴 Session JSON 快速添加 Team
+  - ✅ 自动解析 user.id, user.email, account.id, account.organizationId, accessToken
+  - ✅ 自动生成默认 Team 名称（使用邮箱前缀）
+  - ✅ 添加模式切换（手动填写 / 快速添加）
+  - ✅ 添加 Team 后自动刷新统计信息
+  - ✅ 自动同步 Team 创建时间
+
+**使用方法**:
+1. 访问 https://chatgpt.com/api/auth/session 获取 JSON
+2. 进入管理后台 → Team管理 → 添加Team
+3. 选择"快速添加（粘贴JSON）"模式
+4. 粘贴完整 JSON，点击"解析 JSON"
+5. 自动切换到手动模式，检查字段后保存
 
 ### 2026-01-27
 
@@ -267,16 +391,16 @@ docs/
 - 审计日志：完整的 member_lease_events 记录
 
 ### 近期提交 (Git Log)
+- `cb5e453` - feat: 实现异常转移和优化 Team 选择策略
+- `a955fd1` - feat: 优化到期转移和添加解绑功能
+- `d7d8e42` - feat: 添加 Team 状态定期自动检测功能
+- `db86cd9` - feat: 添加 Team 后自动刷新统计信息
+- `2cb779b` - feat: 添加 Team 快速添加功能（支持粘贴 JSON）
+- `8dd5f3a` - fix: 修复 Team 状态检测逻辑并添加详细日志
+- `5ee4076` - feat: 添加 Team 状态检测和优化创建时间显示
 - `1232eab` - fix: align login input and button width with box-sizing
 - `6926074` - style: change login button color from blue to black
 - `276687b` - Restore CN labels and backfill team added time
-- `5187355` - Team tabs: English status labels
-- `c835329` - Show team added time (created_at) in stats
-- `3659963` - Fix lease delete (route order + DB delete)
-- `e89d506` - debug: 添加删除功能调试日志
-- `b5e2933` - fix: 增加数据库超时时间,解决删除时 database locked 错误
-- `af2408d` - feat: 前端完整实现自动转移权限控制功能
-- `5a95ad5` - feat: Team统计添加"添加时间"字段
 
 ---
 
@@ -368,6 +492,43 @@ consume_reserved_code(code, lock_id)
 
 ---
 
+### DR-005: Team 选择策略 - 优先最早创建
+**日期**: 2026-01-28
+**决策**: 转移时优先选择最早创建的 Team，而非轮询
+**背景**: 原轮询策略可能导致用户被分配到新建的不稳定 Team
+**新策略**:
+1. 获取所有可用 Team（排除当前 Team 和停用的 Team）
+2. 按 `created_at` 时间排序（最早的在前）
+3. 优先选择最早创建的 Team
+4. 如果失败，依次尝试下一个
+
+**实现**:
+```python
+def _pick_next_team(current_team_name: str):
+    # 获取所有 Team 及其创建时间
+    teams_with_time = []
+    for team in config.TEAMS:
+        created_at = db.get_team_created_at(team['name'])
+        if team['name'] != current_team_name and is_active:
+            teams_with_time.append((team, created_at))
+
+    # 按创建时间排序（最早的在前）
+    teams_with_time.sort(key=lambda x: x[1] or datetime.max)
+    return [t[0] for t in teams_with_time]
+```
+
+**优势**:
+- ✅ 优先使用最稳定的 Team（运行时间最长）
+- ✅ 避免新建 Team 的不稳定期
+- ✅ 可预测的转移行为
+- ✅ 配合异常转移，确保用户始终可用
+
+**权衡**:
+- ⚠️ 可能导致某些 Team 负载较高（但可通过席位监控解决）
+- ⚠️ 需要准确的 Team 创建时间数据
+
+---
+
 ## ❓ 常见问题
 
 ### Q1: 数据库锁定错误 (database is locked)
@@ -453,6 +614,46 @@ def _auto_reload_config_if_changed():
 
 ---
 
+### Q6: 异常转移和到期转移有什么区别？
+**问题**: 系统有两种转移机制，分别在什么时候触发？
+
+**到期转移** (原有功能):
+- **触发条件**: 租约到期（`expires_at <= now`）
+- **检测频率**: 每 5 分钟（默认 `AUTO_TRANSFER_POLL_SECONDS=300`）
+- **使用场景**: 正常的周期性转移（如每月转移）
+- **配置**: `AUTO_TRANSFER_ENABLED=true`
+
+**异常转移** (新功能):
+- **触发条件**: Team 不可用（Token 失效、停用等）
+- **检测频率**: 每 30 分钟（默认 `ABNORMAL_TRANSFER_CHECK_INTERVAL=1800`）
+- **使用场景**: 紧急情况，确保用户始终可用
+- **配置**: `ABNORMAL_TRANSFER_CHECK_ENABLED=true`
+
+**工作流程**:
+```
+用户兑换 → 加入 Team A
+    ↓
+正常使用（status=active）
+    ↓
+[情况1] Team A Token 失效
+    → 异常转移检测（30分钟内）
+    → 立即转移到 Team B
+    → 用户无感切换
+    ↓
+[情况2] 租约到期（1个月后）
+    → 到期转移检测（5分钟内）
+    → 转移到 Team C
+    → 开始新的租约周期
+```
+
+**最佳实践**:
+- 两种机制同时启用，互为补充
+- 异常转移确保可用性（快速响应）
+- 到期转移实现席位复用（周期性管理）
+- 配合 Team 状态检测（每 3 小时），提前发现问题
+
+---
+
 ## 🏗️ 技术架构
 
 ### 系统架构图
@@ -462,14 +663,23 @@ def _auto_reload_config_if_changed():
 │  - User redemption API (/api/redeem)                    │
 │  - Admin dashboard (/admin/*)                           │
 │  - Session management & authentication                  │
+│  - Background workers (transfer, monitor, status check) │
 └─────────────────────────────────────────────────────────┘
                           ↓
 ┌─────────────────────────────────────────────────────────┐
 │    Business Logic Services                              │
 │  - RedemptionService (redemption_service.py)            │
 │  - TransferService (transfer_service.py)                │
+│  - TransferExecutor (transfer_executor.py)              │
 │  - JoinSyncService (join_sync_service.py)               │
 │  - TeamService (team_service.py)                        │
+└─────────────────────────────────────────────────────────┘
+                          ↓
+┌─────────────────────────────────────────────────────────┐
+│    Monitoring & Background Tasks                        │
+│  - TeamStatusChecker (team_status_checker.py)           │
+│  - AbnormalTransferChecker (abnormal_transfer_checker.py)│
+│  - Monitor & AlertManager (monitor.py)                  │
 └─────────────────────────────────────────────────────────┘
                           ↓
 ┌─────────────────────────────────────────────────────────┐
@@ -477,7 +687,8 @@ def _auto_reload_config_if_changed():
 │  - SQLite database management                           │
 │  - Redemption codes CRUD                                │
 │  - Member leases & events                               │
-│  - Team statistics                                      │
+│  - Team statistics & status                             │
+│  - System alerts                                        │
 └─────────────────────────────────────────────────────────┘
                           ↓
 ┌─────────────────────────────────────────────────────────┐
@@ -499,16 +710,26 @@ def _auto_reload_config_if_changed():
 **表结构**:
 - `redemption_codes`: 兑换码（状态、使用次数、自动转移标志）
 - `redemptions`: 兑换记录（邮箱、兑换码、时间戳）
-- `teams_stats`: Team 统计（总席位、已用、待定）
+- `teams_stats`: Team 统计（总席位、已用、待定、状态、创建时间）
+  - `is_active`: Team 是否可用（Boolean）
+  - `status_error`: 状态错误信息（Text）
+  - `last_checked_at`: 最后检测时间（DateTime）
+  - `created_at`: Team 创建时间（DateTime）
+  - `created_at_source`: 创建时间数据来源（Text）
 - `member_leases`: 成员租约（邮箱、Team、加入时间、到期时间、状态）
 - `member_lease_events`: 审计日志（状态变更、转移记录）
 - `app_locks`: 全局锁（多 worker 协调）
+- `system_alerts`: 系统告警（级别、分类、消息、状态）
 
 **关键方法**:
 - `reserve_code()` / `consume_reserved_code()`: 并发安全的兑换码预留
 - `upsert_member_lease()`: 创建/更新租约
 - `list_due_member_leases()`: 获取到期租约
 - `update_member_lease_transfer_success()`: 标记转移成功
+- `update_team_status()`: 更新 Team 状态
+- `get_team_status()`: 获取 Team 状态
+- `update_team_created_at()`: 更新 Team 创建时间
+- `get_team_created_at()`: 获取 Team 创建时间
 
 #### 3. 兑换服务 (redemption_service.py)
 **流程**:
@@ -573,13 +794,78 @@ def _auto_reload_config_if_changed():
 - `GET /api/admin/leases`: 成员租约
 - `POST /api/admin/leases/sync`: 同步 join_at
 - `POST /api/admin/leases/transfer`: 手动转移
+- `POST /api/admin/leases/<id>/unbind`: 解绑用户
 - `POST /api/admin/codes/generate`: 生成兑换码
+- `GET /api/admin/alerts`: 获取告警列表
+- `POST /api/admin/alerts/check`: 手动触发告警检查
+- `POST /api/admin/alerts/<id>/resolve`: 标记告警为已解决
 
 **特性**:
 - Session 认证（固定 SECRET_KEY）
 - IP 检测（支持 X-Forwarded-For）
 - 配置文件自动重载
 - 后台转移 worker 线程
+- 后台监控和告警线程
+
+#### 8. 监控和告警 (monitor.py)
+**功能**:
+- `AlertManager`: 告警管理器
+  - `create_alert()`: 创建告警
+  - `get_alerts()`: 获取告警列表
+  - `resolve_alert()`: 标记告警为已解决
+  - `get_alert_stats()`: 获取告警统计
+
+- `Monitor`: 监控器
+  - `check_team_capacity()`: 检查 Team 席位使用率
+  - `check_transfer_failures()`: 检查转移失败
+  - `check_database_performance()`: 检查数据库性能
+  - `check_system_health()`: 系统健康检查
+
+**告警级别**:
+- `critical`: 严重（席位使用率 ≥ 95%）
+- `error`: 错误（转移失败）
+- `warning`: 警告（席位使用率 ≥ 85%）
+- `info`: 信息（系统状态）
+
+**告警分类**:
+- `team_capacity`: Team 席位容量
+- `transfer_failure`: 转移失败
+- `database_performance`: 数据库性能
+- `system_health`: 系统健康
+
+#### 9. Team 状态检测 (team_status_checker.py)
+**功能**:
+- 定期检测所有 Team 的 Token 是否有效
+- 更新数据库状态（is_active, status_error, last_checked_at）
+- 前端实时显示 Team 状态
+
+**检测逻辑**:
+```python
+def check_all_teams():
+    for team in teams:
+        status = check_team_status(team_config)
+        if status['is_active']:
+            db.update_team_status(team_name, True, None)
+        else:
+            db.update_team_status(team_name, False, status['error'])
+```
+
+#### 10. 异常转移检测 (abnormal_transfer_checker.py)
+**功能**:
+- 定期检查活跃租约的 Team 状态
+- 如果 Team 不可用，立即触发转移
+- 确保用户始终可用，实现无感切换
+
+**检测逻辑**:
+```python
+def check_and_transfer_abnormal_leases():
+    leases = db.get_active_leases()
+    for lease in leases:
+        team_status = db.get_team_status(lease.team_name)
+        if not team_status.is_active:
+            # 立即转移，不等待到期
+            TransferExecutor.execute(lease.email, only_if_due=False)
+```
 
 ### 数据流图
 
@@ -672,6 +958,127 @@ deleted (删除)
 ---
 
 ## 🛠️ 开发指南
+
+### 环境变量配置
+
+#### 必需配置
+
+```bash
+# 管理后台密码
+ADMIN_PASSWORD=your-secure-password
+
+# Flask session 加密密钥（多进程必须固定）
+SECRET_KEY=your-secret-key-here
+
+# 数据目录
+DATA_DIR=/data
+
+# 数据库文件路径
+REDEMPTION_DATABASE_FILE=/data/redemption.db
+
+# 代理信任（获取真实 IP）
+TRUST_PROXY=true
+```
+
+#### 自动转移配置
+
+```bash
+# 启用自动转移（默认 false）
+AUTO_TRANSFER_ENABLED=true
+
+# 转移周期（月）
+AUTO_TRANSFER_TERM_MONTHS=1
+
+# 轮询间隔（秒）
+AUTO_TRANSFER_POLL_SECONDS=300
+
+# 自动退出旧 Team
+AUTO_TRANSFER_AUTO_LEAVE_OLD_TEAM=true
+
+# 兑换码锁定时间（秒）
+REDEMPTION_CODE_LOCK_SECONDS=120
+```
+
+#### Team 状态监控配置 ⭐
+
+```bash
+# Team 状态检测（默认启用）
+TEAM_STATUS_CHECK_ENABLED=true
+TEAM_STATUS_CHECK_INTERVAL=10800  # 3 小时
+
+# 异常转移检测（默认启用）⭐ 核心功能
+ABNORMAL_TRANSFER_CHECK_ENABLED=true
+ABNORMAL_TRANSFER_CHECK_INTERVAL=1800  # 30 分钟
+
+# 监控和告警（默认启用）
+MONITOR_ENABLED=true
+MONITOR_INTERVAL=300  # 5 分钟
+```
+
+#### 可选配置
+
+```bash
+# 日志级别
+LOG_LEVEL=INFO
+
+# 时区
+TZ=Asia/Shanghai
+```
+
+#### 完整推荐配置
+
+```bash
+# ==================== 基础配置 ====================
+ADMIN_PASSWORD=your-secure-password
+SECRET_KEY=your-secret-key-here
+DATA_DIR=/data
+REDEMPTION_DATABASE_FILE=/data/redemption.db
+TRUST_PROXY=true
+REDEMPTION_CODE_LOCK_SECONDS=120
+LOG_LEVEL=INFO
+TZ=Asia/Shanghai
+
+# ==================== 自动转移配置 ====================
+AUTO_TRANSFER_ENABLED=true
+AUTO_TRANSFER_TERM_MONTHS=1
+AUTO_TRANSFER_POLL_SECONDS=300
+AUTO_TRANSFER_AUTO_LEAVE_OLD_TEAM=true
+
+# ==================== Team 状态检测 ====================
+TEAM_STATUS_CHECK_ENABLED=true
+TEAM_STATUS_CHECK_INTERVAL=10800
+
+# ==================== 异常转移检测 ⭐ ====================
+ABNORMAL_TRANSFER_CHECK_ENABLED=true
+ABNORMAL_TRANSFER_CHECK_INTERVAL=1800
+
+# ==================== 监控和告警 ====================
+MONITOR_ENABLED=true
+MONITOR_INTERVAL=300
+```
+
+#### 不同场景配置建议
+
+**生产环境（推荐）**:
+```bash
+TEAM_STATUS_CHECK_INTERVAL=7200      # 2 小时
+ABNORMAL_TRANSFER_CHECK_INTERVAL=1800 # 30 分钟
+MONITOR_INTERVAL=300                  # 5 分钟
+```
+
+**高频检测（Token 经常失效）**:
+```bash
+TEAM_STATUS_CHECK_INTERVAL=3600      # 1 小时
+ABNORMAL_TRANSFER_CHECK_INTERVAL=600  # 10 分钟
+MONITOR_INTERVAL=180                  # 3 分钟
+```
+
+**低频检测（Token 很稳定）**:
+```bash
+TEAM_STATUS_CHECK_INTERVAL=21600     # 6 小时
+ABNORMAL_TRANSFER_CHECK_INTERVAL=3600 # 1 小时
+MONITOR_INTERVAL=600                  # 10 分钟
+```
 
 ### 本地开发环境搭建
 
@@ -951,6 +1358,98 @@ session.mount('https://', adapter)
 
 ---
 
-**文档版本**: v1.0.0
-**生成时间**: 2026-01-27
+**文档版本**: v1.1.0
+**生成时间**: 2026-01-28
 **生成工具**: Claude Code (Sonnet 4.5)
+
+---
+
+## 🎉 最新亮点 (2026-01-28)
+
+### 核心功能升级
+
+**1. 三层保护机制** ⭐
+- Team 状态检测（每 3 小时）：提前发现问题
+- 异常转移（每 30 分钟）：快速响应，确保可用
+- 到期转移（每 5 分钟）：周期管理，席位复用
+
+**2. 智能 Team 选择策略**
+- 优先选择最早创建的 Team（最稳定）
+- 不再使用轮询策略
+- 配合异常转移，确保用户始终可用
+
+**3. 完善的监控告警系统**
+- Team 席位使用率监控（≥85% 警告，≥95% 严重）
+- 转移失败检测和告警
+- 数据库性能监控
+- 系统健康检查
+
+**4. 用户体验优化**
+- 解绑功能：从工作空间移除用户
+- Team 快速添加：粘贴 Session JSON 快速配置
+- 前端实时显示 Team 状态（正常/停用/未知）
+- 批量兑换优化：分离式输入，实时进度
+
+### 技术架构改进
+
+**新增模块**:
+- `team_status_checker.py`: Team 状态检测
+- `abnormal_transfer_checker.py`: 异常转移检测
+- `monitor.py`: 监控和告警管理
+- `transfer_executor.py`: 优化转移执行逻辑
+
+**数据库增强**:
+- `teams_stats`: 添加状态字段（is_active, status_error, last_checked_at）
+- `teams_stats`: 添加创建时间字段（created_at, created_at_source）
+- `system_alerts`: 新增告警表
+
+**API 扩展**:
+- `POST /api/admin/leases/<id>/unbind`: 解绑用户
+- `GET /api/admin/alerts`: 获取告警列表
+- `POST /api/admin/alerts/check`: 手动触发检查
+- `POST /api/admin/alerts/<id>/resolve`: 标记告警为已解决
+
+### 配置优化
+
+**推荐配置**:
+```bash
+# 三层保护
+TEAM_STATUS_CHECK_ENABLED=true
+TEAM_STATUS_CHECK_INTERVAL=7200          # 2 小时
+
+ABNORMAL_TRANSFER_CHECK_ENABLED=true
+ABNORMAL_TRANSFER_CHECK_INTERVAL=1800    # 30 分钟
+
+AUTO_TRANSFER_ENABLED=true
+AUTO_TRANSFER_POLL_SECONDS=300           # 5 分钟
+
+# 监控告警
+MONITOR_ENABLED=true
+MONITOR_INTERVAL=300                     # 5 分钟
+```
+
+### 文档完善
+
+**新增文档**:
+- `docs/API.md`: 完整的 REST API 文档
+- `docs/TROUBLESHOOTING.md`: 故障排查指南
+- `docs/PERFORMANCE.md`: 性能优化指南
+- `docs/TRANSFER_REVIEW.md`: 转移服务代码审查
+- `docs/GROUP_MANAGEMENT.md`: 兑换码分组管理方案
+- `docs/TEAM_CREATED_TIME.md`: Team 开通时间识别方案
+
+**更新文档**:
+- `CLAUDE.md`: 添加三层保护机制、决策记录、常见问题
+- `README.md`: 更新功能特性和配置说明
+
+### 下一步计划
+
+**待实现功能**:
+1. 兑换码分组管理（设计已完成，约 7 小时实现）
+2. Team 开通时间前端界面（后端已完成，约 1-2 小时）
+3. 更多监控指标（API 响应时间、成功率等）
+
+**优化方向**:
+1. 性能优化：数据库索引、查询优化
+2. 测试覆盖：单元测试、集成测试
+3. 文档完善：用户手册、运维手册
